@@ -96,3 +96,54 @@ def test_save_config(tmp_path: Path):
     assert reloaded.note_prefix == "[%Y/%m/%d %H:%M]"
 
 
+def test_config_aliases_and_quotes(tmp_path: Path):
+    cfg_file = tmp_path / "aliases_quotes.conf"
+    cfg_file.write_text(
+        """
+[hey-whisper]
+folder = "~/test_notes"
+note-prefix = "* [%H:%M]"
+trigger = "toggle"
+shortcut = "F10"
+style = "dark"
+engine = "faster-whisper"
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_path=cfg_file)
+    assert cfg.notes_dir == Path.home() / "test_notes"
+    assert cfg.note_prefix == "* [%H:%M]"
+    assert cfg.mode == "toggle"
+    assert cfg.hotkey == "F10"
+    assert cfg.theme == "dark"
+    assert cfg.backend == "faster-whisper"
+
+
+def test_config_no_section_header_with_comments(tmp_path: Path):
+    cfg_file = tmp_path / "no_section.conf"
+    cfg_file.write_text(
+        """# Configuration for Hey Whisper
+notes_dir = /tmp/direct_notes
+note_prefix = [YYYY-MM-DD HH:MM TZ]
+mode = hold
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_path=cfg_file)
+    assert cfg.notes_dir == Path("/tmp/direct_notes").resolve()
+    assert cfg.note_prefix == "[YYYY-MM-DD HH:MM TZ]"
+    assert cfg.mode == "hold"
+
+
+def test_empty_or_none_prefix(tmp_path: Path):
+    from hey_whisper.storage import format_entry_line, format_note_prefix
+
+    assert format_note_prefix("none") == ""
+    assert format_note_prefix("empty") == ""
+    assert format_entry_line("A clean note", prefix_template="none") == "- A clean note"
+    assert format_entry_line("Another note", prefix_template='""') == "- Another note"
+
+
+

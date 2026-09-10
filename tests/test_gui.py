@@ -2,7 +2,10 @@
 
 import os
 from pathlib import Path
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 from PyQt6.QtWidgets import QApplication
 
 # Set offscreen platform for headless test runs
@@ -16,12 +19,13 @@ from hey_whisper.gui.theme import get_theme_colors, LIGHT_THEME, DARK_THEME
 from hey_whisper.storage import append_note
 
 
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(["pytest-qt"])
-    return app
+if pytest is not None:
+    @pytest.fixture(scope="session")
+    def qapp():
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(["pytest-qt"])
+        return app
 
 
 
@@ -121,7 +125,13 @@ def test_global_shortcuts_signals(qapp, tmp_path: Path):
 
 def test_settings_dialog_and_config_button(qapp, tmp_path: Path):
     from hey_whisper.gui.settings_dialog import SettingsDialog
-    cfg = AppConfig(notes_dir=tmp_path, mode="hold", hotkey="Space", theme="light")
+    cfg = AppConfig(
+        notes_dir=tmp_path,
+        mode="hold",
+        hotkey="Space",
+        theme="light",
+        config_file=tmp_path / "test_gui_settings.conf",
+    )
     win = MainWindow(cfg)
 
     # Verify config button exists and has gear icon / tooltip

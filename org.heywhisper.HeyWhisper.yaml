@@ -13,8 +13,8 @@ finish-args:
   - --socket=pulseaudio
   # Storage access for user notes and configuration
   - --filesystem=host
-  - --filesystem=xdg-config/hey-whisper.conf:ro
-  - --filesystem=xdg-config/spoken-notes.conf:ro
+  - --filesystem=xdg-config/hey-whisper.conf:create
+  - --filesystem=xdg-config/spoken-notes.conf:create
   # Network access for downloading faster-whisper and GGML model weights
   - --share=network
   # GPU / Vulkan hardware acceleration (AMD, Intel, Nvidia)

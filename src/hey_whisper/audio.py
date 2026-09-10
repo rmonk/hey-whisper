@@ -122,7 +122,9 @@ class AudioRecorder:
                 if self._last_speech_time is not None:
                     silence_duration = now - self._last_speech_time
                     if silence_duration >= self.silence_timeout:
-                        # Auto-stop triggered by silence
+                        # Auto-stop triggered by silence (trigger once per session)
+                        self._speech_detected = False
+                        self._silence_mode = False
                         if self.silence_stop_callback is not None:
                             threading.Thread(
                                 target=self.silence_stop_callback,

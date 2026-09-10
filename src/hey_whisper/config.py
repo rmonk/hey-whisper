@@ -25,6 +25,7 @@ Whisper backends:
 """
 
 import os
+import re
 import configparser
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,30 @@ class AppConfig:
     config_file: Optional[Path] = None
 
 
+def _clean_str(val: Optional[str]) -> Optional[str]:
+    """Strip whitespace and surrounding single or double quotes."""
+    if val is None:
+        return None
+    val = val.strip()
+    if len(val) >= 2 and ((val[0] == '"' and val[-1] == '"') or (val[0] == "'" and val[-1] == "'")):
+        val = val[1:-1].strip()
+    return val
+
+
+def get_default_config_path() -> Path:
+    """Return default config path, prioritizing ~/.config/hey-whisper.conf, XDG_CONFIG_HOME, or spoken-notes.conf."""
+    if DEFAULT_CONFIG_PATH.is_file():
+        return DEFAULT_CONFIG_PATH
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        xp = Path(xdg) / "hey-whisper.conf"
+        if xp.is_file():
+            return xp
+    if FALLBACK_CONFIG_PATH.is_file():
+        return FALLBACK_CONFIG_PATH
+    return DEFAULT_CONFIG_PATH
+
+
 def load_config(
     cli_dir: Optional[str] = None,
     cli_mode: Optional[str] = None,
@@ -63,14 +88,7 @@ def load_config(
     config_path: Optional[Path] = None,
 ) -> AppConfig:
     """Load configuration with precedence: CLI > config file > default (CWD for notes_dir)."""
-    target_config = config_path
-    if target_config is None:
-        if DEFAULT_CONFIG_PATH.is_file():
-            target_config = DEFAULT_CONFIG_PATH
-        elif FALLBACK_CONFIG_PATH.is_file():
-            target_config = FALLBACK_CONFIG_PATH
-        else:
-            target_config = DEFAULT_CONFIG_PATH
+    target_config = config_path or get_default_config_path()
 
     # Raw file values
     file_dir: Optional[str] = None
@@ -88,50 +106,77 @@ def load_config(
 
     if target_config.is_file():
         text = target_config.read_text(encoding="utf-8")
+        # Prepend a default [general] header if no section header exists in file
+        if not re.search(r"^\s*\[[^\]]+\]", text, re.MULTILINE):
+            text = "[general]\n" + text
+
         parser = configparser.ConfigParser(interpolation=None)
-        if not text.strip().startswith("["):
-            text = "[hey_whisper]\n" + text
         try:
             parser.read_string(text)
-            section = "general" if parser.has_section("general") else (
-                "hey_whisper" if parser.has_section("hey_whisper") else (
-                    "spoken_notes" if parser.has_section("spoken_notes") else parser.sections()[0]
-                )
-            )
 
-            def get_val(key: str) -> Optional[str]:
-                if parser.has_option(section, key):
-                    return parser.get(section, key)
-                for s in parser.sections():
-                    if parser.has_option(s, key):
-                        return parser.get(s, key)
+            def get_val(*keys: str) -> Optional[str]:
+                # Prepare all normalized variations of the key
+                wanted = set()
+                for k in keys:
+                    low = k.lower().strip()
+                    wanted.add(low)
+                    wanted.add(low.replace("-", "_"))
+                    wanted.add(low.replace("_", "-"))
+
+                # Check preferred sections first
+                preferred = ["general", "hey_whisper", "hey-whisper", "recording", "notes", "spoken_notes", "spoken-notes"]
+                existing_sections = parser.sections()
+                section_map = {s.lower(): s for s in existing_sections}
+
+                for pref in preferred:
+                    sec_name = section_map.get(pref)
+                    if sec_name:
+                        for opt in parser.options(sec_name):
+                            norm_opt = opt.lower().strip()
+                            if norm_opt in wanted or norm_opt.replace("-", "_") in wanted or norm_opt.replace("_", "-") in wanted:
+                                return _clean_str(parser.get(sec_name, opt))
+
+                # Check any other sections
+                for sec in existing_sections:
+                    for opt in parser.options(sec):
+                        norm_opt = opt.lower().strip()
+                        if norm_opt in wanted or norm_opt.replace("-", "_") in wanted or norm_opt.replace("_", "-") in wanted:
+                            return _clean_str(parser.get(sec, opt))
                 return None
 
-            file_dir = get_val("notes_dir") or get_val("dir")
-            file_mode = get_val("mode")
-            file_hotkey = get_val("hotkey")
-            file_model = get_val("model")
-            file_backend = get_val("backend")
-            file_theme = get_val("theme")
-            file_note_prefix = get_val("note_prefix") or get_val("prefix")
+            file_dir = get_val(
+                "notes_dir", "notes-dir", "dir", "directory",
+                "notes_directory", "notes-directory", "folder",
+                "notes_folder", "notes-folder", "path", "notes_path", "notes-path"
+            )
+            file_mode = get_val("mode", "trigger_mode", "trigger-mode", "trigger", "recording_mode", "recording-mode")
+            file_hotkey = get_val("hotkey", "shortcut", "key", "global_hotkey", "global-hotkey")
+            file_model = get_val("model", "whisper_model", "whisper-model")
+            file_backend = get_val("backend", "engine", "whisper_backend", "whisper-backend")
+            file_theme = get_val("theme", "color_theme", "color-theme", "style")
+            file_note_prefix = get_val(
+                "note_prefix", "note-prefix", "prefix", "prefix_template",
+                "prefix-template", "prefix_format", "prefix-format",
+                "timestamp_format", "timestamp-format", "timestamp_prefix", "timestamp-prefix", "format"
+            )
             file_device = get_val("device")
-            file_compute_type = get_val("compute_type")
+            file_compute_type = get_val("compute_type", "compute-type")
 
-            timeout_str = get_val("silence_timeout")
+            timeout_str = get_val("silence_timeout", "silence-timeout", "timeout")
             if timeout_str:
                 try:
                     file_silence_timeout = float(timeout_str)
                 except ValueError:
                     pass
 
-            thresh_str = get_val("silence_threshold")
+            thresh_str = get_val("silence_threshold", "silence-threshold", "threshold")
             if thresh_str:
                 try:
                     file_silence_threshold = float(thresh_str)
                 except ValueError:
                     pass
 
-            vk_dev_str = get_val("vulkan_device")
+            vk_dev_str = get_val("vulkan_device", "vulkan-device", "gpu_device", "gpu-device")
             if vk_dev_str:
                 try:
                     file_vulkan_dev = int(vk_dev_str)
@@ -142,24 +187,24 @@ def load_config(
 
     # Resolve notes directory: CLI > config file > CWD
     if cli_dir:
-        resolved_dir = Path(cli_dir).expanduser().resolve()
+        resolved_dir = Path(_clean_str(cli_dir)).expanduser().resolve()
     elif file_dir:
         resolved_dir = Path(file_dir).expanduser().resolve()
     else:
         resolved_dir = Path.cwd().resolve()
 
     # Resolve trigger mode: CLI > config file > default "hold"
-    mode_candidate = (cli_mode or file_mode or "hold").lower().strip()
+    mode_candidate = (_clean_str(cli_mode) or file_mode or "hold").lower().strip()
     if mode_candidate not in ("hold", "toggle", "silence"):
         mode_candidate = "hold"
 
     # Resolve backend: CLI > config file > default "auto"
-    backend_candidate = (cli_backend or file_backend or "auto").lower().strip()
+    backend_candidate = (_clean_str(cli_backend) or file_backend or "auto").lower().strip()
     if backend_candidate not in ("auto", "vulkan", "faster-whisper"):
         backend_candidate = "auto"
 
     # Resolve theme: CLI > config file > default "auto"
-    theme_candidate = (cli_theme or file_theme or "auto").lower().strip()
+    theme_candidate = (_clean_str(cli_theme) or file_theme or "auto").lower().strip()
     if theme_candidate not in ("auto", "light", "dark"):
         theme_candidate = "auto"
 
@@ -169,10 +214,10 @@ def load_config(
         else (file_silence_timeout if file_silence_timeout is not None else 1.5)
     )
 
-    model = cli_model or file_model or "base.en"
+    model = _clean_str(cli_model) or file_model or "base.en"
     hotkey = file_hotkey or "Space"
     silence_threshold = file_silence_threshold if file_silence_threshold is not None else 500.0
-    note_prefix = cli_note_prefix or file_note_prefix or "[%Y-%m-%d %H:%M %Z]"
+    note_prefix = _clean_str(cli_note_prefix) or file_note_prefix or "[%Y-%m-%d %H:%M %Z]"
     device = file_device or "auto"
     compute_type = file_compute_type or "int8"
     vulkan_device = file_vulkan_dev if file_vulkan_dev is not None else 0
@@ -197,7 +242,6 @@ def load_config(
 def save_config(config: AppConfig, path: Optional[Path] = None) -> Path:
     """Save configuration to ~/.config/hey-whisper.conf or specified path."""
     target = path or config.config_file or DEFAULT_CONFIG_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
 
     parser = configparser.ConfigParser(interpolation=None)
     if target.is_file():
@@ -225,9 +269,26 @@ def save_config(config: AppConfig, path: Optional[Path] = None) -> Path:
     parser.set("recording", "silence_timeout", str(config.silence_timeout))
     parser.set("recording", "silence_threshold", str(config.silence_threshold))
 
-    with open(target, "w", encoding="utf-8") as f:
-        parser.write(f)
-
-    config.config_file = target
-    return target
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
+            parser.write(f)
+        config.config_file = target
+        return target
+    except OSError as e:
+        # Fallback: if saving to target failed (e.g. read-only mount in Flatpak),
+        # try saving to XDG_CONFIG_HOME if different
+        xdg_conf = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_conf:
+            fallback = Path(xdg_conf) / "hey-whisper.conf"
+            if fallback.resolve() != target.resolve():
+                try:
+                    fallback.parent.mkdir(parents=True, exist_ok=True)
+                    with open(fallback, "w", encoding="utf-8") as f:
+                        parser.write(f)
+                    config.config_file = fallback
+                    return fallback
+                except Exception:
+                    pass
+        raise e
 

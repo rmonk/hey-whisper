@@ -2,7 +2,10 @@
 
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 from hey_whisper.storage import (
     get_week_bounds,

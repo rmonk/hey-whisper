@@ -59,7 +59,14 @@ def format_note_prefix(template: Optional[str] = None, dt: Optional[datetime] = 
     if not tz_str:
         tz_str = dt.strftime("%z")
 
-    raw_tpl = template if template and template.strip() else DEFAULT_NOTE_PREFIX
+    if template is None:
+        raw_tpl = DEFAULT_NOTE_PREFIX
+    else:
+        raw_tpl = template.strip()
+        if len(raw_tpl) >= 2 and ((raw_tpl[0] == '"' and raw_tpl[-1] == '"') or (raw_tpl[0] == "'" and raw_tpl[-1] == "'")):
+            raw_tpl = raw_tpl[1:-1].strip()
+        if not raw_tpl or raw_tpl.lower() in ("none", "empty", "off"):
+            return ""
 
     # Convert common human-readable date/time variables if present without %
     expanded = raw_tpl
@@ -67,15 +74,26 @@ def format_note_prefix(template: Optional[str] = None, dt: Optional[datetime] = 
         expanded = expanded.replace("TZ", tz_str)
     if "YYYY" in expanded:
         expanded = expanded.replace("YYYY", "%Y")
+    if "YY" in expanded:
+        expanded = expanded.replace("YY", "%y")
     if "DD" in expanded:
         expanded = expanded.replace("DD", "%d")
     if "HH" in expanded:
         expanded = expanded.replace("HH", "%H")
-    # Convert :MM in time and -MM- in date
+    if "SS" in expanded:
+        expanded = expanded.replace("SS", "%S")
+
+    # Convert MM: minute when preceded or followed by :, month otherwise
     expanded = re.sub(r':MM\b', ':%M', expanded)
+    expanded = re.sub(r'\bMM:', '%M:', expanded)
     expanded = re.sub(r'\bMM-', '%m-', expanded)
     expanded = re.sub(r'-MM\b', '-%m', expanded)
+    expanded = re.sub(r'-MM-', '-%m-', expanded)
     expanded = re.sub(r'/MM\b', '/%m', expanded)
+    expanded = re.sub(r'\bMM/', '%m/', expanded)
+    expanded = re.sub(r'/MM/', '/%m/', expanded)
+    expanded = re.sub(r'\.MM\b', '.%m', expanded)
+    expanded = re.sub(r'\bMM\.', '%m.', expanded)
 
     # Format using standard strftime
     try:
@@ -94,6 +112,9 @@ def format_entry_line(
     """Format full entry line for a note, ensuring markdown list bullet structure."""
     cleaned = text.strip()
     prefix = format_note_prefix(prefix_template, dt)
+
+    if not prefix:
+        return f"- {cleaned}"
 
     if re.match(r"^(\s*[-*+]|\s*\d+\.|\s*>)", prefix):
         return f"{prefix} {cleaned}"

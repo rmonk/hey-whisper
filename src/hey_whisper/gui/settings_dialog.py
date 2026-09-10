@@ -1,7 +1,10 @@
 """Configuration dialog for Hey Whisper settings."""
 
+import logging
 from pathlib import Path
 from typing import Optional, Callable
+
+logger = logging.getLogger(__name__)
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -227,8 +230,8 @@ class SettingsDialog(QDialog):
         # Persist to disk
         try:
             save_config(self.config)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not persist configuration to disk: %s", e)
 
         self.settings_applied.emit(self.config)
         self.accept()

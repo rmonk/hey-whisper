@@ -137,7 +137,6 @@ class MainWindow(QMainWindow):
         self.record_btn = QPushButton("🎙️ Record")
         self.record_btn.setFixedHeight(42)
         self.record_btn.setFont(QFont("Sans-Serif", 11, QFont.Weight.Bold))
-        self.record_btn.installEventFilter(self)
         self.record_btn.clicked.connect(self._on_record_btn_clicked)
         top_bar.addWidget(self.record_btn)
 
@@ -457,26 +456,30 @@ class MainWindow(QMainWindow):
 
     def stop_capture_and_transcribe(self):
         """Stop microphone capture and launch background transcription."""
-        if not self.recorder.is_recording:
+        if getattr(self, "_is_stopping", False) or not self.recorder.is_recording:
             return
 
-        audio_data = self.recorder.stop_recording()
-        self.vu_meter.setValue(0)
-        self._update_record_button_text()
+        self._is_stopping = True
+        try:
+            audio_data = self.recorder.stop_recording()
+            self.vu_meter.setValue(0)
+            self._update_record_button_text()
 
-        if len(audio_data) < int(16000 * 0.3):  # Less than 300ms
-            self.status_bar.showMessage("Recording was too short to transcribe.")
-            return
+            if len(audio_data) < int(16000 * 0.3):  # Less than 300ms
+                self.status_bar.showMessage("Recording was too short to transcribe.")
+                return
 
-        backend_name = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
-        self.status_bar.showMessage(f"⏳ Transcribing audio with {backend_name}...")
-        self.record_btn.setEnabled(False)
+            backend_name = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+            self.status_bar.showMessage(f"⏳ Transcribing audio with {backend_name}...")
+            self.record_btn.setEnabled(False)
 
-        # Launch transcription thread
-        self._active_worker = TranscribeWorker(self.transcriber, audio_data)
-        self._active_worker.finished.connect(self._on_transcription_finished)
-        self._active_worker.error.connect(self._on_transcription_error)
-        self._active_worker.start()
+            # Launch transcription thread
+            self._active_worker = TranscribeWorker(self.transcriber, audio_data)
+            self._active_worker.finished.connect(self._on_transcription_finished)
+            self._active_worker.error.connect(self._on_transcription_error)
+            self._active_worker.start()
+        finally:
+            self._is_stopping = False
 
     def _on_silence_auto_stop(self):
         """Called by audio detector when silence timeout is reached."""
