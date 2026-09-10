@@ -503,9 +503,10 @@ class MainWindow(QMainWindow):
             )
             self.status_bar.showMessage(f"✅ Saved note: \"{text[:60]}...\"")
 
-            # Reload tree and editor
+            # Reload tree and editor, jumping the view down to the new note
             self.month_tree.refresh(self.config.notes_dir, select_path=target_file)
             self.editor.load_file(target_file)
+            self.editor.scroll_to_entry(entry_line, fallback_text=text)
         except Exception as e:
             self._show_error_dialog("Storage Error", f"Failed to save note:\n{e}")
 

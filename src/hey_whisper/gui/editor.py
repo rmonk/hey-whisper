@@ -11,6 +11,7 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QColor,
     QTextCursor,
+    QTextDocument,
 )
 from PyQt6.QtWidgets import (
     QWidget,
@@ -255,7 +256,20 @@ class MarkdownEditorWidget(QWidget):
 
     def _on_tab_changed(self, index: int):
         if index == 1:  # Switched to preview tab
+            val = self.plain_edit.verticalScrollBar().value()
+            max_val = max(1, self.plain_edit.verticalScrollBar().maximum())
+            ratio = val / max_val
             self._update_preview(self.plain_edit.toPlainText())
+            self.preview_edit.verticalScrollBar().setValue(
+                int(ratio * self.preview_edit.verticalScrollBar().maximum())
+            )
+        elif index == 0:  # Switched to edit tab
+            val = self.preview_edit.verticalScrollBar().value()
+            max_val = max(1, self.preview_edit.verticalScrollBar().maximum())
+            ratio = val / max_val
+            self.plain_edit.verticalScrollBar().setValue(
+                int(ratio * self.plain_edit.verticalScrollBar().maximum())
+            )
 
     def save(self):
         """Save changes to disk."""
@@ -273,6 +287,11 @@ class MarkdownEditorWidget(QWidget):
         except Exception as e:
             self.status_label.setText(f"Error saving: {e}")
 
+    def _ensure_views_scrolled(self):
+        """Deferred check ensuring active cursor is centered and visible in viewports."""
+        self.plain_edit.ensureCursorVisible()
+        self.preview_edit.ensureCursorVisible()
+
     def scroll_to_day(self, day_str: str):
         """Move cursor to specified day header in editor and preview."""
         target_header = f"# {day_str}"
@@ -282,6 +301,7 @@ class MarkdownEditorWidget(QWidget):
             cursor = self.plain_edit.textCursor()
             cursor.setPosition(idx)
             self.plain_edit.setTextCursor(cursor)
+            self.plain_edit.centerCursor()
             self.plain_edit.ensureCursorVisible()
 
         # Also scroll preview
@@ -291,3 +311,69 @@ class MarkdownEditorWidget(QWidget):
         if not found.isNull():
             self.preview_edit.setTextCursor(found)
             self.preview_edit.ensureCursorVisible()
+
+        QTimer.singleShot(50, self._ensure_views_scrolled)
+
+    def scroll_to_entry(self, entry_text: str, fallback_text: Optional[str] = None):
+        """Jump cursor and viewport down to newly appended markdown item."""
+        content = self.plain_edit.toPlainText()
+        if not content:
+            return
+
+        candidates = []
+        if entry_text:
+            cleaned_entry = entry_text.strip()
+            if cleaned_entry:
+                candidates.append(cleaned_entry)
+                # Strip leading markdown bullet markers like '- ' or '* '
+                no_bullet = re.sub(r"^(\s*[-*+]|\s*\d+\.|\s*>)\s*", "", cleaned_entry).strip()
+                if no_bullet and no_bullet not in candidates:
+                    candidates.append(no_bullet)
+
+        if fallback_text:
+            cleaned_fallback = fallback_text.strip()
+            if cleaned_fallback and cleaned_fallback not in candidates:
+                candidates.append(cleaned_fallback)
+                if len(cleaned_fallback) > 30:
+                    candidates.append(cleaned_fallback[:30])
+
+        # 1. Scroll raw plain_edit to the item
+        found_pos = -1
+        for cand in candidates:
+            pos = content.rfind(cand)
+            if pos != -1:
+                found_pos = pos
+                break
+
+        if found_pos != -1:
+            cursor = self.plain_edit.textCursor()
+            cursor.setPosition(found_pos)
+            self.plain_edit.setTextCursor(cursor)
+            self.plain_edit.centerCursor()
+            self.plain_edit.ensureCursorVisible()
+        else:
+            self.plain_edit.moveCursor(QTextCursor.MoveOperation.End)
+            self.plain_edit.centerCursor()
+            self.plain_edit.ensureCursorVisible()
+
+        # 2. Scroll rendered preview_edit to the item
+        doc = self.preview_edit.document()
+        preview_cursor = None
+        for cand in candidates:
+            end_cursor = QTextCursor(doc)
+            end_cursor.movePosition(QTextCursor.MoveOperation.End)
+            match = doc.find(cand, end_cursor, QTextDocument.FindFlag.FindBackward)
+            if not match.isNull():
+                preview_cursor = match
+                break
+
+        if preview_cursor and not preview_cursor.isNull():
+            self.preview_edit.setTextCursor(preview_cursor)
+            self.preview_edit.ensureCursorVisible()
+        else:
+            cursor = self.preview_edit.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.preview_edit.setTextCursor(cursor)
+            self.preview_edit.ensureCursorVisible()
+
+        QTimer.singleShot(50, self._ensure_views_scrolled)

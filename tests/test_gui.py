@@ -52,6 +52,26 @@ def test_editor_load_and_save(qapp, tmp_path: Path):
     qapp.processEvents()
 
 
+def test_editor_scroll_to_entry(qapp, tmp_path: Path):
+    editor = MarkdownEditorWidget()
+    long_content = "\n".join([f"# Day {i}\n- Old note line {i}" for i in range(1, 60)])
+    f = tmp_path / "long_notes.md"
+    f.write_text(long_content + "\n\n# Today\n- [2026-09-10 15:20] Jump target item\n")
+    editor.load_file(f)
+
+    # Initial position after load_file is at 0
+    assert editor.plain_edit.textCursor().position() == 0
+
+    # Jump view down to entry
+    editor.scroll_to_entry("- [2026-09-10 15:20] Jump target item", fallback_text="Jump target item")
+    qapp.processEvents()
+
+    # Cursor position in raw edit view moved down to the item
+    assert editor.plain_edit.textCursor().position() > 500
+    editor.deleteLater()
+    qapp.processEvents()
+
+
 
 def test_main_window_init(qapp, tmp_path: Path):
     cfg = AppConfig(notes_dir=tmp_path, mode="hold", hotkey="Space", theme="dark")
