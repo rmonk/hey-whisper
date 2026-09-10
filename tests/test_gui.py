@@ -80,8 +80,19 @@ def test_theme_toggle_and_application(qapp, tmp_path: Path):
 
 
 def test_global_shortcuts_signals(qapp, tmp_path: Path):
+    import numpy as np
     cfg = AppConfig(notes_dir=tmp_path, mode="hold", hotkey="Space", theme="dark")
     win = MainWindow(cfg)
+
+    # Mock audio recorder to decouple signal testing from audio hardware in headless CI
+    def mock_start(silence_mode=False):
+        win.recorder._is_recording = True
+    def mock_stop():
+        win.recorder._is_recording = False
+        return np.zeros(0, dtype=np.float32)
+
+    win.recorder.start_recording = mock_start
+    win.recorder.stop_recording = mock_stop
 
     # Test portal ready update
     win._on_portal_ready(True, "Ctrl+Alt+R")

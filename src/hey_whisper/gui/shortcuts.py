@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import threading
 from typing import Optional
 
@@ -38,6 +39,11 @@ class PortalShortcutsManager(QObject):
         if not HAS_DBUS_NEXT:
             logger.warning("dbus-next is not installed; global portal shortcuts disabled.")
             self.portal_ready.emit(False, "dbus-next missing")
+            return
+
+        if os.environ.get("CI") or os.environ.get("HEY_WHISPER_NO_PORTAL") or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            logger.info("Headless / CI environment detected; portal shortcuts disabled.")
+            self.portal_ready.emit(False, "portal disabled in test/CI")
             return
 
         self._is_running = True
@@ -130,7 +136,7 @@ class PortalShortcutsManager(QObject):
                     "handle_token": Variant("s", "req_create_session"),
                 }],
             )
-            await self._bus.call(msg_create)
+            await asyncio.wait_for(self._bus.call(msg_create), timeout=3.0)
             self._session_handle = await asyncio.wait_for(session_fut, timeout=3.0)
 
             # Step 2: BindShortcuts
@@ -152,7 +158,7 @@ class PortalShortcutsManager(QObject):
                     {"handle_token": Variant("s", "req_bind_shortcuts")},
                 ],
             )
-            await self._bus.call(msg_bind)
+            await asyncio.wait_for(self._bus.call(msg_bind), timeout=3.0)
 
             trigger_info = self.preferred_trigger
             try:

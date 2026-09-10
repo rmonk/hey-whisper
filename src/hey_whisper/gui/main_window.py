@@ -1,9 +1,13 @@
 """Main Window for Hey Whisper with month tree, editor, push-to-talk hotkey, theme, and unified settings dialog."""
 
 from datetime import datetime
+import logging
+import os
 from pathlib import Path
 from typing import Optional
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QEvent, QSize
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QIcon, QColor, QFont, QCloseEvent
@@ -305,11 +309,17 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        """Stop background shortcuts listener before exiting."""
+        """Stop background worker and shortcuts listener before exiting."""
+        if self._active_worker and self._active_worker.isRunning():
+            self._active_worker.terminate()
+            self._active_worker.wait(500)
         self.shortcuts_manager.stop()
         super().closeEvent(event)
 
     def close(self) -> bool:
+        if self._active_worker and self._active_worker.isRunning():
+            self._active_worker.terminate()
+            self._active_worker.wait(500)
         self.shortcuts_manager.stop()
         return super().close()
 
@@ -432,7 +442,18 @@ class MainWindow(QMainWindow):
             self._update_record_button_text()
             self.status_bar.showMessage("🔴 Recording audio from default microphone...")
         except Exception as e:
-            QMessageBox.critical(self, "Audio Error", f"Could not access microphone:\n{e}")
+            self._show_error_dialog("Audio Error", f"Could not access microphone:\n{e}")
+
+    def _show_error_dialog(self, title: str, message: str):
+        """Display error dialog unless running headless in offscreen or CI mode."""
+        self.status_bar.showMessage(f"❌ {title}: {message}")
+        logger.error("%s: %s", title, message)
+        app = QApplication.instance()
+        if app and app.platformName() == "offscreen":
+            return
+        if os.environ.get("CI") or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return
+        QMessageBox.critical(self, title, message)
 
     def stop_capture_and_transcribe(self):
         """Stop microphone capture and launch background transcription."""
@@ -483,13 +504,12 @@ class MainWindow(QMainWindow):
             self.month_tree.refresh(self.config.notes_dir, select_path=target_file)
             self.editor.load_file(target_file)
         except Exception as e:
-            QMessageBox.critical(self, "Storage Error", f"Failed to save note:\n{e}")
+            self._show_error_dialog("Storage Error", f"Failed to save note:\n{e}")
 
     def _on_transcription_error(self, err_msg: str):
         self.record_btn.setEnabled(True)
         self._update_record_button_text()
-        self.status_bar.showMessage(f"❌ Transcription error: {err_msg}")
-        QMessageBox.critical(self, "Transcription Error", err_msg)
+        self._show_error_dialog("Transcription Error", err_msg)
 
     def _on_audio_level(self, rms: float, peak: float):
         if self.recorder.is_recording:
