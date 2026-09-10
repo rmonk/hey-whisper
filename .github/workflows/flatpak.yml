@@ -1,0 +1,149 @@
+name: Build and Publish Flatpak
+
+'on':
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libportaudio2 \
+            portaudio19-dev \
+            libasound2-dev \
+            libpulse-dev \
+            libgl1 \
+            libegl1 \
+            libxkbcommon0 \
+            libdbus-1-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+
+      - name: Run Pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          pytest -v
+
+  build-and-publish:
+    name: Build & Publish Flatpak
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Maximize Runner Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift 2>/dev/null || true
+
+      - name: Install Flatpak & Flatpak Builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add Flathub Remote
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache Flatpak Builder State
+        uses: actions/cache@v4
+        with:
+          path: |
+            .flatpak-builder
+          key: flatpak-builder-${{ runner.os }}-${{ hashFiles('org.heywhisper.HeyWhisper.yaml') }}
+          restore-keys: |
+            flatpak-builder-${{ runner.os }}-
+
+      - name: Install KDE 6.6 Platform and SDK
+        run: |
+          flatpak install --user -y --noninteractive flathub org.kde.Platform//6.6 org.kde.Sdk//6.6
+
+      - name: Build Flatpak Application
+        run: |
+          flatpak-builder --user --disable-rofiles-fuse --force-clean --repo=repo build-dir org.heywhisper.HeyWhisper.yaml
+
+      - name: Create Standalone Flatpak Bundle (.flatpak)
+        run: |
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo hey-whisper.flatpak org.heywhisper.HeyWhisper
+          ls -lh hey-whisper.flatpak
+
+      - name: Upload Flatpak as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hey-whisper-flatpak
+          path: hey-whisper.flatpak
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Determine Release Information
+        id: release_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "title=Release ${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "title=Hey Whisper (Latest Build)" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.title }}
+          draft: false
+          prerelease: ${{ steps.release_info.outputs.is_prerelease == 'true' }}
+          make_latest: "true"
+          generate_release_notes: true
+          body: |
+            ### Automated Flatpak Package
+
+            Standalone Flatpak bundle built automatically from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
+
+            #### Download & Install:
+            ```bash
+            # Install or update the Flatpak bundle
+            flatpak install --user -y --reinstall hey-whisper.flatpak
+
+            # Launch Hey Whisper
+            flatpak run org.heywhisper.HeyWhisper
+            ```
+          files: hey-whisper.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

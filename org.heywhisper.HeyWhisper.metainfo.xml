@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.heywhisper.HeyWhisper</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Hey Whisper</name>
+  <summary>Capture spoken voice notes and transcribe them into weekly markdown logs</summary>
+  <description>
+    <p>
+      Hey Whisper is a lightweight speech-to-text note-taking tool powered by faster-whisper.
+      It captures audio from your default microphone and generates clean, weekly markdown logs
+      separated by day headers and timestamped entries.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Push-to-talk transcription hotkey (held-down key or click)</li>
+      <li>Automatic voice activity / silence detection</li>
+      <li>Left-side interactive notes tree grouped by month</li>
+      <li>Built-in markdown editor and rendered reader</li>
+      <li>Configurable storage directory with ~/.config/spoken-notes.conf support</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.heywhisper.HeyWhisper.desktop</launchable>
+  <provides>
+    <binary>hey-whisper</binary>
+  </provides>
+</component>

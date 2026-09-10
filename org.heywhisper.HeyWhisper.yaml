@@ -1,0 +1,83 @@
+app-id: org.heywhisper.HeyWhisper
+runtime: org.kde.Platform
+runtime-version: '6.6'
+sdk: org.kde.Sdk
+command: hey-whisper
+
+finish-args:
+  # Display servers
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --share=ipc
+  # Microphone capture via PipeWire / PulseAudio
+  - --socket=pulseaudio
+  # Storage access for user notes and configuration
+  - --filesystem=host
+  - --filesystem=xdg-config/hey-whisper.conf:ro
+  - --filesystem=xdg-config/spoken-notes.conf:ro
+  # Network access for downloading faster-whisper and GGML model weights
+  - --share=network
+  # GPU / Vulkan hardware acceleration (AMD, Intel, Nvidia)
+  - --device=all
+
+build-options:
+  env:
+    PYTHONPATH: /app/lib/python3.11/site-packages
+
+modules:
+  - name: portaudio
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DPA_BUILD_SHARED=ON
+      - -DPA_USE_ALSA=ON
+      - -DPA_USE_PULSEAUDIO=ON
+    sources:
+      - type: archive
+        url: https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz
+        sha256: 5af29ba58bbdbb7bbcefaaecc77ec8fc413f0db6f4c4e286c40c3e1b83174fa0
+
+  - name: glslc
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - install -d /app/bin
+      - curl -sL "https://sdk.lunarg.com/sdk/download/latest/linux/vulkan-sdk.tar.xz" | tar -xJ --wildcards "*/x86_64/bin/glslc" -O > /app/bin/glslc
+      - chmod +x /app/bin/glslc
+
+  - name: whisper-vulkan
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DGGML_VULKAN=ON
+      - -DVulkan_GLSLC_EXECUTABLE=/app/bin/glslc
+      - -DWHISPER_BUILD_EXAMPLES=ON
+    sources:
+      - type: archive
+        url: https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.7.4.tar.gz
+        sha256: 9ce7b33028793fcbf62f81f1fd087af7778dace8772eaba8c43c66bf0c8a3eed
+
+  - name: hey-whisper
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - python3 -m pip install --prefix=/app --no-warn-script-location faster-whisper sounddevice numpy PyQt6 dbus-next .
+      - install -Dm644 org.heywhisper.HeyWhisper.desktop /app/share/applications/org.heywhisper.HeyWhisper.desktop
+      - install -Dm644 org.heywhisper.HeyWhisper.metainfo.xml /app/share/metainfo/org.heywhisper.HeyWhisper.metainfo.xml
+      - install -Dm644 org.heywhisper.HeyWhisper.svg /app/share/icons/hicolor/scalable/apps/org.heywhisper.HeyWhisper.svg
+    sources:
+      - type: dir
+        path: .
+        skip:
+          - .venv
+          - .flatpak-builder
+          - build-dir
+          - repo
+          - "*.flatpak"
+          - .git
+          - .pytest_cache
+          - "*.egg-info"

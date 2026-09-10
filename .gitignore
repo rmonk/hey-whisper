@@ -1,0 +1,16 @@
+# Python virtualenv & caches
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Flatpak build artifacts & bundles
+.flatpak-builder/
+build-dir/
+repo/
+*.flatpak
+
+# Local notes or audio scratch
+spoken-notes-*.md
+*.wav

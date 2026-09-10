@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0969da"/>
+      <stop offset="100%" stop-color="#1f2328"/>
+    </linearGradient>
+    <linearGradient id="mic" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ddf4ff"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded squircle -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)"/>
+  
+  <!-- Sound waves -->
+  <path d="M 28 64 A 36 36 0 0 1 100 64" fill="none" stroke="#54aeff" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+  <path d="M 20 64 A 44 44 0 0 1 108 64" fill="none" stroke="#79c0ff" stroke-width="3" stroke-linecap="round" opacity="0.3"/>
+
+  <!-- Microphone Capsule -->
+  <rect x="52" y="32" width="24" height="42" rx="12" fill="url(#mic)" filter="drop-shadow(0px 4px 6px rgba(0,0,0,0.3))"/>
+  
+  <!-- Microphone Stand U-bar -->
+  <path d="M 44 58 C 44 75, 84 75, 84 58" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  
+  <!-- Stand Stem -->
+  <line x1="64" y1="75" x2="64" y2="92" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <!-- Stand Base -->
+  <line x1="48" y1="92" x2="80" y2="92" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  
+  <!-- Little note accent -->
+  <circle cx="86" cy="38" r="4" fill="#2da44e"/>
+</svg>

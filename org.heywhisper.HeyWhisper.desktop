@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Hey Whisper
+Comment=Voice notes transcribed with faster-whisper into weekly markdown logs
+Exec=hey-whisper
+Icon=org.heywhisper.HeyWhisper
+Terminal=false
+Type=Application
+Categories=Office;AudioVideo;Utility;
+Keywords=whisper;transcription;voice;notes;audio;markdown;
+StartupNotify=true
