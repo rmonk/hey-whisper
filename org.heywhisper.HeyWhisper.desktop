@@ -8,3 +8,4 @@ Type=Application
 Categories=Office;AudioVideo;Utility;
 Keywords=whisper;transcription;voice;notes;audio;markdown;
 StartupNotify=true
+StartupWMClass=org.heywhisper.HeyWhisper

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize
 from PyQt6.QtGui import (
     QFont,
     QSyntaxHighlighter,
@@ -22,6 +22,11 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QPlainTextEdit,
     QTextEdit,
+)
+from hey_whisper.gui.icons import (
+    create_save_icon,
+    create_edit_icon,
+    create_preview_icon,
 )
 
 from hey_whisper.gui.theme import ThemeColors, LIGHT_THEME, get_preview_html_styles
@@ -102,7 +107,9 @@ class MarkdownEditorWidget(QWidget):
         self.status_label = QLabel("")
         self.status_label.setFont(QFont("Sans-Serif", 10))
 
-        self.save_btn = QPushButton("Save")
+        self.save_btn = QPushButton(" Save")
+        self.save_btn.setIcon(create_save_icon(size=14, color="#ffffff"))
+        self.save_btn.setIconSize(QSize(14, 14))
         self.save_btn.clicked.connect(self.save)
         self.save_btn.setEnabled(False)
 
@@ -114,6 +121,7 @@ class MarkdownEditorWidget(QWidget):
 
         # Tab Widget for Edit vs Preview
         self.tabs = QTabWidget()
+        self.tabs.setIconSize(QSize(16, 16))
 
         # Edit View
         self.plain_edit = QPlainTextEdit()
@@ -122,14 +130,16 @@ class MarkdownEditorWidget(QWidget):
         self.plain_edit.setFont(font)
         self.plain_edit.textChanged.connect(self._on_text_changed)
         self.highlighter = MarkdownHighlighter(self.plain_edit.document(), self._colors)
-        self.tabs.addTab(self.plain_edit, "✏️ Edit (Raw)")
+        self.tabs.addTab(self.plain_edit, "Edit (Raw)")
+        self.tabs.setTabIcon(0, create_edit_icon(size=16, color=self._colors.text_primary))
 
         # Preview View (Rendered Markdown)
         self.preview_edit = QTextEdit()
         self.preview_edit.setReadOnly(True)
         preview_font = QFont("Sans-Serif", 11)
         self.preview_edit.setFont(preview_font)
-        self.tabs.addTab(self.preview_edit, "📖 Preview (Rendered)")
+        self.tabs.addTab(self.preview_edit, "Preview (Rendered)")
+        self.tabs.setTabIcon(1, create_preview_icon(size=16, color=self._colors.text_primary))
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs)
@@ -137,6 +147,10 @@ class MarkdownEditorWidget(QWidget):
     def apply_theme(self, colors: ThemeColors):
         """Update editor styling, colors, and syntax highlighting."""
         self._colors = colors
+
+        self.tabs.setTabIcon(0, create_edit_icon(size=16, color=colors.text_primary))
+        self.tabs.setTabIcon(1, create_preview_icon(size=16, color=colors.text_primary))
+        self.save_btn.setIcon(create_save_icon(size=14, color="#ffffff"))
 
         self.file_label.setStyleSheet(f"color: {colors.text_primary}; font-weight: bold;")
         self.status_label.setStyleSheet(f"color: {colors.text_secondary}; font-size: 12px;")

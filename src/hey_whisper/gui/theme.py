@@ -203,37 +203,4 @@ def get_preview_html_styles(colors: ThemeColors) -> str:
     """
 
 
-def create_gear_icon(size: int = 24, color: str = "#c9d1d9") -> QIcon:
-    """Create a crisp standard gear icon pixmap."""
-    pix = QPixmap(size, size)
-    pix.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pix)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(color))
-
-    cx, cy = size / 2.0, size / 2.0
-    outer_r = size * 0.42
-    inner_r = size * 0.30
-    teeth = 8
-
-    # Outer teeth
-    for i in range(teeth):
-        tooth_w = size * 0.16
-        tooth_h = size * 0.22
-        painter.save()
-        painter.translate(cx, cy)
-        painter.rotate(i * (360 / teeth))
-        painter.drawRoundedRect(int(-tooth_w / 2), int(-outer_r), int(tooth_w), int(tooth_h), 1, 1)
-        painter.restore()
-
-    # Main circle body
-    painter.drawEllipse(QPointF(cx, cy), inner_r, inner_r)
-
-    # Center hole
-    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-    painter.drawEllipse(QPointF(cx, cy), size * 0.13, size * 0.13)
-    painter.end()
-
-    return QIcon(pix)
+from hey_whisper.gui.icons import create_gear_icon  # noqa: F401

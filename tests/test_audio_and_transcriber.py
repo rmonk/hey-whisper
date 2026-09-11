@@ -3,7 +3,10 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import numpy as np
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 from hey_whisper.audio import AudioRecorder
 from hey_whisper.transcriber import Transcriber, save_audio_to_wav

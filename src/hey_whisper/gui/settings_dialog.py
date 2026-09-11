@@ -6,7 +6,7 @@ from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -26,6 +26,12 @@ from PyQt6.QtWidgets import (
 from hey_whisper.config import AppConfig, save_config
 from hey_whisper.storage import format_entry_line, DEFAULT_NOTE_PREFIX
 from hey_whisper.gui.theme import ThemeColors
+from hey_whisper.gui.icons import (
+    get_app_icon,
+    create_folder_icon,
+    create_check_icon,
+    create_keyboard_icon,
+)
 
 
 class SettingsDialog(QDialog):
@@ -48,6 +54,7 @@ class SettingsDialog(QDialog):
         self.global_trigger_info = global_trigger_info
 
         self.setWindowTitle("Hey Whisper - Configuration")
+        self.setWindowIcon(get_app_icon())
         self.setMinimumWidth(560)
         self.setModal(True)
 
@@ -96,7 +103,9 @@ class SettingsDialog(QDialog):
         self.folder_edit = QLineEdit(str(self.config.notes_dir))
         folder_row.addWidget(self.folder_edit)
 
-        self.browse_btn = QPushButton("📁 Browse...")
+        self.browse_btn = QPushButton(" Browse...")
+        self.browse_btn.setIcon(create_folder_icon(size=14, color="#d29922"))
+        self.browse_btn.setIconSize(QSize(14, 14))
         self.browse_btn.clicked.connect(self._browse_folder)
         folder_row.addWidget(self.browse_btn)
 
@@ -144,7 +153,9 @@ class SettingsDialog(QDialog):
         global_row.addStretch()
 
         if self.on_configure_global_hotkey:
-            self.sys_shortcut_btn = QPushButton("Configure in System...")
+            self.sys_shortcut_btn = QPushButton(" Configure in System...")
+            self.sys_shortcut_btn.setIcon(create_keyboard_icon(size=14, color=self._colors.text_primary))
+            self.sys_shortcut_btn.setIconSize(QSize(14, 14))
             self.sys_shortcut_btn.setToolTip("Open desktop environment shortcut settings (KDE / GNOME)")
             self.sys_shortcut_btn.clicked.connect(self.on_configure_global_hotkey)
             global_row.addWidget(self.sys_shortcut_btn)
@@ -185,7 +196,9 @@ class SettingsDialog(QDialog):
 
         # 6. Dialog Buttons
         btn_box = QDialogButtonBox()
-        self.save_btn = btn_box.addButton("Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.save_btn = btn_box.addButton(" Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
+        self.save_btn.setIconSize(QSize(14, 14))
         self.cancel_btn = btn_box.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
         btn_box.accepted.connect(self._save_and_apply)
         btn_box.rejected.connect(self.reject)
@@ -304,4 +317,7 @@ class SettingsDialog(QDialog):
                 background-color: #2ea043 if {colors.is_dark} else #1f883d;
             }}
         """)
+        if self.sys_shortcut_btn:
+            self.sys_shortcut_btn.setIcon(create_keyboard_icon(size=14, color=colors.text_primary))
+        self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
         self._update_prefix_preview()

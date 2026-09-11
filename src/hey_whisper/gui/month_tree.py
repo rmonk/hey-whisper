@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
@@ -20,6 +20,12 @@ from hey_whisper.storage import (
     DATE_PATTERN,
 )
 from hey_whisper.gui.theme import ThemeColors, LIGHT_THEME
+from hey_whisper.gui.icons import (
+    create_calendar_icon,
+    create_folder_icon,
+    create_document_icon,
+    create_pin_icon,
+)
 
 
 class MonthTreeWidget(QTreeWidget):
@@ -33,13 +39,13 @@ class MonthTreeWidget(QTreeWidget):
         self.setHeaderLabels(["Notes by Month"])
         self.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.setAnimated(True)
+        self.setIconSize(QSize(18, 18))
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.itemClicked.connect(self._on_item_clicked)
+        self._notes_dir: Optional[Path] = None
         self._current_colors = LIGHT_THEME
         self.apply_theme(LIGHT_THEME)
-
-        self._notes_dir: Optional[Path] = None
 
     def apply_theme(self, colors: ThemeColors):
         """Update tree widget styling for light or dark mode."""
@@ -75,6 +81,14 @@ class MonthTreeWidget(QTreeWidget):
                 font-size: 12px;
             }}
         """)
+        if self._notes_dir:
+            cur_item = self.currentItem()
+            cur_path = None
+            if cur_item:
+                data = cur_item.data(0, Qt.ItemDataRole.UserRole)
+                if data and data[0] == "file":
+                    cur_path = data[1]
+            self.refresh(self._notes_dir, select_path=cur_path)
 
     def refresh(self, notes_dir: Path, select_path: Optional[Path] = None):
         """Re-scan notes_dir and rebuild the tree."""
@@ -90,7 +104,8 @@ class MonthTreeWidget(QTreeWidget):
 
         # Sort years descending
         for year in sorted(grouped.keys(), reverse=True):
-            year_item = QTreeWidgetItem(self, [f"📅 {year}"])
+            year_item = QTreeWidgetItem(self, [f" {year}"])
+            year_item.setIcon(0, create_calendar_icon(size=16, color=self._current_colors.accent))
             year_item.setFlags(year_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             year_item.setData(0, Qt.ItemDataRole.UserRole, ("year", year))
 
@@ -103,7 +118,8 @@ class MonthTreeWidget(QTreeWidget):
             for month in sorted(months_dict.keys(), reverse=True):
                 month_name = calendar.month_name[month]
                 file_count = len(months_dict[month])
-                month_item = QTreeWidgetItem(year_item, [f"📁 {month_name} ({file_count})"])
+                month_item = QTreeWidgetItem(year_item, [f" {month_name} ({file_count})"])
+                month_item.setIcon(0, create_folder_icon(size=16, color="#d29922"))
                 month_item.setFlags(month_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 month_item.setData(0, Qt.ItemDataRole.UserRole, ("month", year, month))
 
@@ -123,7 +139,8 @@ class MonthTreeWidget(QTreeWidget):
                     else:
                         display_date = file_path.name
 
-                    file_item = QTreeWidgetItem(month_item, [f"📝 {display_date}"])
+                    file_item = QTreeWidgetItem(month_item, [f" {display_date}"])
+                    file_item.setIcon(0, create_document_icon(size=16, color=self._current_colors.text_primary))
                     file_item.setToolTip(0, str(file_path))
                     file_item.setData(0, Qt.ItemDataRole.UserRole, ("file", file_path))
 
@@ -133,7 +150,8 @@ class MonthTreeWidget(QTreeWidget):
                     # Add day headers as children
                     days = get_file_days(file_path)
                     for day in days:
-                        day_item = QTreeWidgetItem(file_item, [f"  📌 {day}"])
+                        day_item = QTreeWidgetItem(file_item, [f"  {day}"])
+                        day_item.setIcon(0, create_pin_icon(size=14, color=self._current_colors.text_secondary))
                         day_item.setData(0, Qt.ItemDataRole.UserRole, ("day", file_path, day))
 
         if selected_item:

@@ -102,10 +102,12 @@ def main(argv=None):
     try:
         from PyQt6.QtWidgets import QApplication
         from hey_whisper.gui import MainWindow
+        from hey_whisper.gui.icons import get_app_icon
 
         app = QApplication(sys.argv)
         app.setApplicationName("Hey Whisper")
         app.setDesktopFileName("org.heywhisper.HeyWhisper")
+        app.setWindowIcon(get_app_icon())
 
         window = MainWindow(config)
         window.show()

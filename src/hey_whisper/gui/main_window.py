@@ -38,6 +38,11 @@ from hey_whisper.gui.theme import (
     get_theme_colors,
     LIGHT_THEME,
     DARK_THEME,
+)
+from hey_whisper.gui.icons import (
+    get_app_icon,
+    create_mic_icon,
+    create_stop_icon,
     create_gear_icon,
 )
 from hey_whisper.gui.month_tree import MonthTreeWidget
@@ -78,6 +83,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.setWindowTitle("Hey Whisper - Spoken Voice Notes")
+        self.setWindowIcon(get_app_icon())
         self.resize(1050, 680)
 
         # Transcriber and Audio Engine
@@ -134,7 +140,9 @@ class MainWindow(QMainWindow):
         top_bar.setSpacing(12)
 
         # Record / Push-to-Talk Button
-        self.record_btn = QPushButton("🎙️ Record")
+        self.record_btn = QPushButton(" Record")
+        self.record_btn.setIcon(create_mic_icon(size=20, color="#ffffff"))
+        self.record_btn.setIconSize(QSize(20, 20))
         self.record_btn.setFixedHeight(42)
         self.record_btn.setFont(QFont("Sans-Serif", 11, QFont.Weight.Bold))
         self.record_btn.clicked.connect(self._on_record_btn_clicked)
@@ -157,15 +165,8 @@ class MainWindow(QMainWindow):
 
         # Configuration button with standard gear icon
         self.config_btn = QPushButton(" Config")
-        gear_icon = QIcon.fromTheme("preferences-system")
-        if gear_icon.isNull():
-            gear_icon = QIcon.fromTheme("configure")
-        if not gear_icon.isNull():
-            self.config_btn.setIcon(gear_icon)
-            self.config_btn.setIconSize(QSize(18, 18))
-        else:
-            self.config_btn.setText("⚙️ Config")
-
+        self.config_btn.setIcon(create_gear_icon(size=18, color=self._current_colors.text_primary))
+        self.config_btn.setIconSize(QSize(18, 18))
         self.config_btn.setFont(QFont("Sans-Serif", 10, QFont.Weight.Bold))
         self.config_btn.setToolTip("Configure settings (Mode, Folder, Shortcuts, Theme)")
         self.config_btn.clicked.connect(self._open_settings_dialog)
@@ -389,7 +390,8 @@ class MainWindow(QMainWindow):
     def _update_record_button_text(self):
         colors = self._current_colors
         if self.recorder.is_recording:
-            self.record_btn.setText("🔴 Recording... (Release/Click to End)")
+            self.record_btn.setIcon(create_stop_icon(size=20, color="#ffffff"))
+            self.record_btn.setText(" Recording... (Release/Click to End)")
             self.record_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {colors.record_active_bg};
@@ -403,12 +405,13 @@ class MainWindow(QMainWindow):
                 }}
             """)
         else:
+            self.record_btn.setIcon(create_mic_icon(size=20, color="#ffffff"))
             if self._current_mode == "hold":
-                self.record_btn.setText(f"🎙️ Hold to Record [{self.config.hotkey}]")
+                self.record_btn.setText(f" Hold to Record [{self.config.hotkey}]")
             elif self._current_mode == "toggle":
-                self.record_btn.setText("🎙️ Click to Record")
+                self.record_btn.setText(" Click to Record")
             else:
-                self.record_btn.setText("🎙️ Voice Detection (Click to Arm)")
+                self.record_btn.setText(" Voice Detection (Click to Arm)")
 
             self.record_btn.setStyleSheet(f"""
                 QPushButton {{

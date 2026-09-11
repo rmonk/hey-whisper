@@ -69,6 +69,7 @@ modules:
       - install -Dm644 org.heywhisper.HeyWhisper.desktop /app/share/applications/org.heywhisper.HeyWhisper.desktop
       - install -Dm644 org.heywhisper.HeyWhisper.metainfo.xml /app/share/metainfo/org.heywhisper.HeyWhisper.metainfo.xml
       - install -Dm644 org.heywhisper.HeyWhisper.svg /app/share/icons/hicolor/scalable/apps/org.heywhisper.HeyWhisper.svg
+      - for s in 16 24 32 48 64 128 256 512; do install -Dm644 resources/icons/${s}x${s}/org.heywhisper.HeyWhisper.png /app/share/icons/hicolor/${s}x${s}/apps/org.heywhisper.HeyWhisper.png; done
     sources:
       - type: dir
         path: .
