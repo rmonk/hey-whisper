@@ -24,6 +24,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QProgressBar,
+    QTabWidget,
+    QScrollArea,
 )
 
 from hey_whisper.config import AppConfig, save_config
@@ -138,15 +140,49 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("Hey Whisper - Configuration")
         self.setWindowIcon(get_app_icon())
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(600)
+        self.resize(600, 640)
         self.setModal(True)
 
         self._init_ui()
         self.apply_theme(self._colors)
 
+    @staticmethod
+    def _make_scroll_tab(content: QWidget) -> QScrollArea:
+        """Wrap a tab page's content in a scroll area so the dialog's own
+        height stays fixed no matter how many groups a tab ends up holding."""
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        return scroll
+
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(14)
+
+        self.tabs = QTabWidget()
+        general_page = self._build_general_tab()
+        engine_page = self._build_engine_tab()
+        self.tabs.addTab(self._make_scroll_tab(general_page), "General")
+        self.tabs.addTab(self._make_scroll_tab(engine_page), "Engine")
+        main_layout.addWidget(self.tabs)
+
+        # Dialog Buttons (shared across tabs)
+        btn_box = QDialogButtonBox()
+        self.save_btn = btn_box.addButton(" Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
+        self.save_btn.setIconSize(QSize(14, 14))
+        self.cancel_btn = btn_box.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_box.accepted.connect(self._save_and_apply)
+        btn_box.rejected.connect(self.reject)
+        main_layout.addWidget(btn_box)
+
+    def _build_general_tab(self) -> QWidget:
+        page = QWidget()
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(14)
 
         # 1. Recording Mode & Behavior Group
@@ -224,8 +260,8 @@ class SettingsDialog(QDialog):
         self._update_prefix_preview()
         main_layout.addWidget(prefix_group)
 
-        # 4. Hotkeys & Shortcuts Group
-        hotkey_group = QGroupBox("Keyboard Shortcuts")
+        # 4. Hotkeys, Shortcuts && Appearance Group
+        hotkey_group = QGroupBox("Shortcuts && Appearance")
         hotkey_form = QFormLayout(hotkey_group)
         hotkey_form.setSpacing(10)
 
@@ -256,18 +292,27 @@ class SettingsDialog(QDialog):
             self.hotkey_combo.addItem(self.config.hotkey)
             self.hotkey_combo.setCurrentText(self.config.hotkey)
         hotkey_form.addRow("In-App Hotkey:", self.hotkey_combo)
-        main_layout.addWidget(hotkey_group)
-
-        # 5. Appearance & Engine Group
-        app_group = QGroupBox("Appearance && Engine")
-        app_form = QFormLayout(app_group)
-        app_form.setSpacing(10)
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Auto (Follow OS)", "Dark Theme", "Light Theme"])
         theme_map = {"auto": 0, "dark": 1, "light": 2}
         self.theme_combo.setCurrentIndex(theme_map.get(self.config.theme, 0))
-        app_form.addRow("Color Theme:", self.theme_combo)
+        hotkey_form.addRow("Color Theme:", self.theme_combo)
+
+        main_layout.addWidget(hotkey_group)
+        main_layout.addStretch()
+        return page
+
+    def _build_engine_tab(self) -> QWidget:
+        page = QWidget()
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(14)
+
+        # 1. Backend & Active Model Group
+        app_group = QGroupBox("Backend && Active Model")
+        app_form = QFormLayout(app_group)
+        app_form.setSpacing(10)
 
         self.backend_combo = QComboBox()
         self.backend_combo.addItems([
@@ -292,7 +337,7 @@ class SettingsDialog(QDialog):
 
         main_layout.addWidget(app_group)
 
-        # 5b. Whisper Model Management Group
+        # 2. Whisper Model Management Group
         models_group = QGroupBox("Whisper Models (Loaded / Available)")
         models_layout = QVBoxLayout(models_group)
         models_layout.setSpacing(8)
@@ -307,10 +352,12 @@ class SettingsDialog(QDialog):
         self.model_download_progress.setVisible(False)
         models_layout.addWidget(self.model_download_progress)
 
-        model_btn_row = QHBoxLayout()
         self.model_status_label = QLabel("")
         self.model_status_label.setWordWrap(True)
-        model_btn_row.addWidget(self.model_status_label, 1)
+        models_layout.addWidget(self.model_status_label)
+
+        model_btn_row = QHBoxLayout()
+        model_btn_row.addStretch()
 
         self.download_model_btn = QPushButton("Download")
         self.download_model_btn.clicked.connect(self._download_selected_model)
@@ -330,7 +377,7 @@ class SettingsDialog(QDialog):
         self._model_download_worker: Optional[ModelDownloadWorker] = None
         self._refresh_model_list()
 
-        # 5c. NVIDIA Parakeet / Canary Model Management Group
+        # 3. NVIDIA Parakeet / Canary Model Management Group
         nemo_group = QGroupBox("NVIDIA Parakeet && Canary Models (via onnx-asr)")
         nemo_layout = QVBoxLayout(nemo_group)
         nemo_layout.setSpacing(8)
@@ -345,10 +392,12 @@ class SettingsDialog(QDialog):
         self.nemo_download_progress.setVisible(False)
         nemo_layout.addWidget(self.nemo_download_progress)
 
-        nemo_btn_row = QHBoxLayout()
         self.nemo_status_label = QLabel("")
         self.nemo_status_label.setWordWrap(True)
-        nemo_btn_row.addWidget(self.nemo_status_label, 1)
+        nemo_layout.addWidget(self.nemo_status_label)
+
+        nemo_btn_row = QHBoxLayout()
+        nemo_btn_row.addStretch()
 
         self.download_nemo_btn = QPushButton("Download")
         self.download_nemo_btn.clicked.connect(self._download_selected_nemo_model)
@@ -376,7 +425,7 @@ class SettingsDialog(QDialog):
         self._nemo_download_worker: Optional[NemoDownloadWorker] = None
         self._refresh_nemo_model_list()
 
-        # 5d. Vulkan GPU Status Group
+        # 4. Vulkan GPU Status Group
         vulkan_group = QGroupBox("Vulkan GPU Status")
         vulkan_layout = QVBoxLayout(vulkan_group)
         vulkan_layout.setSpacing(6)
@@ -401,15 +450,8 @@ class SettingsDialog(QDialog):
         self._vulkan_probe_worker: Optional[VulkanProbeWorker] = None
         self._check_vulkan_status()
 
-        # 6. Dialog Buttons
-        btn_box = QDialogButtonBox()
-        self.save_btn = btn_box.addButton(" Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
-        self.save_btn.setIconSize(QSize(14, 14))
-        self.cancel_btn = btn_box.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
-        btn_box.accepted.connect(self._save_and_apply)
-        btn_box.rejected.connect(self.reject)
-        main_layout.addWidget(btn_box)
+        main_layout.addStretch()
+        return page
 
     def _on_mode_combo_changed(self, index: int):
         is_silence = (index == 2)
@@ -718,6 +760,37 @@ class SettingsDialog(QDialog):
             QDialog {{
                 background-color: {colors.window_bg};
                 color: {colors.text_primary};
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {colors.border};
+                border-radius: 6px;
+                top: -1px;
+            }}
+            QTabBar::tab {{
+                background-color: {colors.surface_bg};
+                color: {colors.text_secondary};
+                border: 1px solid {colors.border};
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 7px 18px;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {colors.card_bg};
+                color: {colors.accent};
+                font-weight: bold;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {colors.tree_hover_bg};
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: transparent;
             }}
             QGroupBox {{
                 background-color: {colors.card_bg};
