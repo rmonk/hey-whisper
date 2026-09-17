@@ -270,6 +270,12 @@ def save_config(config: AppConfig, path: Optional[Path] = None) -> Path:
     parser.set("recording", "silence_timeout", str(config.silence_timeout))
     parser.set("recording", "silence_threshold", str(config.silence_threshold))
 
+    if target.is_dir():
+        raise OSError(
+            f"Cannot save settings: '{target}' exists as a directory, not a file. "
+            "Remove or rename it, then try again."
+        )
+
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "w", encoding="utf-8") as f:
@@ -282,7 +288,7 @@ def save_config(config: AppConfig, path: Optional[Path] = None) -> Path:
         xdg_conf = os.environ.get("XDG_CONFIG_HOME")
         if xdg_conf:
             fallback = Path(xdg_conf) / "hey-whisper.conf"
-            if fallback.resolve() != target.resolve():
+            if fallback.resolve() != target.resolve() and not fallback.is_dir():
                 try:
                     fallback.parent.mkdir(parents=True, exist_ok=True)
                     with open(fallback, "w", encoding="utf-8") as f:

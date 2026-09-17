@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QTabWidget,
     QScrollArea,
+    QMessageBox,
 )
 
 from hey_whisper.config import AppConfig, save_config
@@ -650,6 +651,12 @@ class SettingsDialog(QDialog):
             save_config(self.config)
         except Exception as e:
             logger.warning("Could not persist configuration to disk: %s", e)
+            QMessageBox.warning(
+                self,
+                "Settings Not Saved",
+                "Your settings will apply for this session, but could not be written to disk "
+                f"and will revert the next time Hey Whisper starts.\n\nError: {e}",
+            )
 
         self.settings_applied.emit(self.config)
         self.accept()

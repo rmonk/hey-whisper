@@ -11,10 +11,13 @@ finish-args:
   - --share=ipc
   # Microphone capture via PipeWire / PulseAudio
   - --socket=pulseaudio
-  # Storage access for user notes and configuration
+  # Storage access for user notes and configuration.
+  # --filesystem=host alone covers ~/.config/hey-whisper.conf; do NOT also grant
+  # --filesystem=xdg-config/hey-whisper.conf:create for a single file path - Flatpak's
+  # bind-mount setup creates a directory as the mount point when the target doesn't
+  # exist yet, permanently turning ~/.config/hey-whisper.conf into an empty directory
+  # that open(path, "w") can never write to (silently breaking settings persistence).
   - --filesystem=host
-  - --filesystem=xdg-config/hey-whisper.conf:create
-  - --filesystem=xdg-config/spoken-notes.conf:create
   # Network access for downloading faster-whisper, GGML, and Parakeet/Canary (onnx-asr) model weights
   - --share=network
   # GPU / Vulkan hardware acceleration (AMD, Intel, Nvidia)

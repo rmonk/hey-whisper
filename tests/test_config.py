@@ -1,6 +1,7 @@
 """Unit tests for config.py."""
 
 from pathlib import Path
+import pytest
 from hey_whisper.config import load_config, AppConfig, DEFAULT_CONFIG_PATH, FALLBACK_CONFIG_PATH
 
 
@@ -94,6 +95,20 @@ def test_save_config(tmp_path: Path):
     assert reloaded.theme == "dark"
     assert reloaded.backend == "vulkan"
     assert reloaded.note_prefix == "[%Y/%m/%d %H:%M]"
+
+
+def test_save_config_raises_clear_error_when_target_is_a_directory(tmp_path: Path):
+    """Regression test: a Flatpak --filesystem=xdg-config/<file>:create grant can leave the
+    config path as an empty directory instead of a file, which silently broke every save
+    before this was pinned down. Saving must fail loudly and clearly, not just log a warning."""
+    from hey_whisper.config import save_config
+
+    blocked_path = tmp_path / "hey-whisper.conf"
+    blocked_path.mkdir()
+
+    cfg = AppConfig(notes_dir=tmp_path, config_file=blocked_path)
+    with pytest.raises(OSError, match="directory"):
+        save_config(cfg, blocked_path)
 
 
 def test_config_aliases_and_quotes(tmp_path: Path):
