@@ -65,6 +65,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify tag is reachable from main
+        run: |
+          # The push.tags filter above only matches the tag NAME (vX.Y.Z); it says
+          # nothing about which branch the tagged commit is actually on. Without
+          # this check, tagging a commit on any branch - not just main - would
+          # still trigger a full build and a published release.
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "::error::Tag '${{ github.ref_name }}' (commit ${{ github.sha }}) is not on main; refusing to build/publish a release."
+            exit 1
+          fi
+
       - name: Maximize Runner Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift 2>/dev/null || true
