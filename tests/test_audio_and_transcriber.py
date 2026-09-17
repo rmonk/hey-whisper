@@ -124,6 +124,42 @@ def test_get_ggml_model_path_reports_progress(tmp_path, monkeypatch):
     assert calls == [(0, 1000), (1000, 1000)]
 
 
+def test_get_ggml_model_path_throttles_rapid_progress_callbacks(tmp_path, monkeypatch):
+    """Regression test: a large download must not fire one progress callback per
+    8KB block (~180,000 calls for a ~1.5GB model like medium.en). Left unthrottled,
+    a GUI progress_callback that emits a cross-thread Qt signal that often floods
+    the receiving thread's event queue, which caused a hard crash (no traceback)
+    right around when a large download finished on at least one real system."""
+    monkeypatch.setattr("hey_whisper.transcriber.CACHE_DIR", tmp_path)
+
+    total_size = 1_500_000_000  # ~medium.en size
+    block_size = 8192
+    num_blocks = total_size // block_size  # ~183,000 reporthook calls
+
+    def fake_urlretrieve(url, filename, reporthook=None):
+        if reporthook:
+            # No time.sleep between calls: simulates a fast local download where
+            # every block arrives well within the throttle window, which is
+            # exactly the scenario that produced the flood. +2 (not +1) so the
+            # final call's block_num * block_size overshoots total_size, matching
+            # urlretrieve's real final partial-block behavior.
+            for block_num in range(num_blocks + 2):
+                reporthook(block_num, block_size, total_size)
+        Path(filename).write_bytes(b"0" * 2_000_000)
+
+    monkeypatch.setattr("urllib.request.urlretrieve", fake_urlretrieve)
+
+    calls = []
+    get_ggml_model_path("medium.en", progress_callback=lambda done, total: calls.append((done, total)))
+
+    # Throttled to roughly one callback per 100ms; a whole fake "download" that
+    # takes near-zero wall-clock time should collapse to only a small handful of
+    # calls, not ~183,000 - specifically the first and the final (100%) one.
+    assert len(calls) < 10
+    assert calls[0] == (0, total_size)
+    assert calls[-1] == (total_size, total_size)
+
+
 def test_get_system_vulkan_devices_parses_summary(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/vulkaninfo")
     mock_result = MagicMock()
