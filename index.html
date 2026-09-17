@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><title>Hey Whisper Flatpak Repo</title></head>
+<body>
+<h1>Hey Whisper Flatpak Repository</h1>
+<p>This page hosts a self-updating Flatpak repository for
+<a href="https://github.com/rmonk/hey-whisper">Hey Whisper</a>.</p>
+<pre>
+flatpak remote-add --user --no-gpg-verify hey-whisper https://rmonk.github.io/hey-whisper/repo
+flatpak install --user hey-whisper org.heywhisper.HeyWhisper
+</pre>
+<p>This repo is populated automatically by CI on each tagged release. If you're seeing
+this placeholder page, no release has published to it yet.</p>
+</body>
+</html>
