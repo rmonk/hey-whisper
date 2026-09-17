@@ -1,5 +1,6 @@
 """Main Window for Hey Whisper with month tree, editor, push-to-talk hotkey, theme, and unified settings dialog."""
 
+from dataclasses import replace
 from datetime import datetime
 import logging
 import os
@@ -74,6 +75,14 @@ class TranscribeWorker(QThread):
             self.finished.emit(text)
         except Exception as e:
             self.error.emit(str(e))
+
+
+def _backend_label(transcriber: Transcriber) -> str:
+    if transcriber.is_vulkan:
+        return "Vulkan GPU"
+    if transcriber.is_nemo:
+        return "NVIDIA NeMo (Parakeet/Canary)"
+    return "faster-whisper"
 
 
 class MainWindow(QMainWindow):
@@ -196,7 +205,7 @@ class MainWindow(QMainWindow):
         # 3. Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        backend_info = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+        backend_info = _backend_label(self.transcriber)
         self.status_bar.showMessage(f"Ready • Backend: {backend_info} • Notes: {self.config.notes_dir}")
 
     def apply_theme(self, colors: ThemeColors):
@@ -274,7 +283,10 @@ class MainWindow(QMainWindow):
     def _open_settings_dialog(self):
         """Open unified configuration dialog."""
         dlg = SettingsDialog(
-            config=self.config,
+            # A copy, not self.config directly: SettingsDialog mutates its config
+            # in place, and _on_settings_applied needs to diff old vs. new values
+            # to know whether the live Transcriber must be recreated.
+            config=replace(self.config),
             current_colors=self._current_colors,
             parent=self,
             on_configure_global_hotkey=self.shortcuts_manager.configure_shortcuts,
@@ -285,11 +297,28 @@ class MainWindow(QMainWindow):
 
     def _on_settings_applied(self, new_config: AppConfig):
         """Handle settings changes saved from SettingsDialog."""
+        transcriber_changed = (
+            new_config.model != self.config.model
+            or new_config.backend != self.config.backend
+            or new_config.device != self.config.device
+            or new_config.compute_type != self.config.compute_type
+            or new_config.vulkan_device != self.config.vulkan_device
+        )
+
         self.config = new_config
         self._current_mode = self.config.mode
         self.recorder.silence_timeout = self.config.silence_timeout
         self.recorder.silence_threshold = self.config.silence_threshold
         self._theme_mode = self.config.theme
+
+        if transcriber_changed:
+            self.transcriber = Transcriber(
+                model_name=self.config.model,
+                backend=self.config.backend,
+                device=self.config.device,
+                compute_type=self.config.compute_type,
+                vulkan_device=self.config.vulkan_device,
+            )
 
         # Re-apply theme if changed
         _, colors = get_theme_colors(self._theme_mode)
@@ -299,7 +328,10 @@ class MainWindow(QMainWindow):
         self.month_tree.refresh(self.config.notes_dir)
         self._load_initial_notes()
         self._update_record_button_text()
-        self.status_bar.showMessage(f"Settings applied • Mode: {self._current_mode.capitalize()} • Notes: {self.config.notes_dir}")
+        backend_info = _backend_label(self.transcriber)
+        self.status_bar.showMessage(
+            f"Settings applied • Model: {self.config.model} • Backend: {backend_info} • Notes: {self.config.notes_dir}"
+        )
 
     def changeEvent(self, event):
         """Detect OS system theme change when in auto mode."""
@@ -472,7 +504,7 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("Recording was too short to transcribe.")
                 return
 
-            backend_name = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+            backend_name = _backend_label(self.transcriber)
             self.status_bar.showMessage(f"⏳ Transcribing audio with {backend_name}...")
             self.record_btn.setEnabled(False)
 

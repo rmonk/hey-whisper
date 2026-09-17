@@ -1,12 +1,36 @@
 """Unit tests for config.py."""
 
 from pathlib import Path
-from hey_whisper.config import load_config, AppConfig, DEFAULT_CONFIG_PATH, FALLBACK_CONFIG_PATH
+import pytest
+from hey_whisper.config import (
+    load_config,
+    AppConfig,
+    DEFAULT_CONFIG_PATH,
+    FALLBACK_CONFIG_PATH,
+    DEFAULT_NEMO_MODEL,
+)
 
 
 def test_config_name():
     assert DEFAULT_CONFIG_PATH.name == "hey-whisper.conf"
     assert FALLBACK_CONFIG_PATH.name == "spoken-notes.conf"
+
+
+def test_nemo_backend_without_explicit_model_gets_nemo_default(tmp_path: Path):
+    """backend=nemo with no model set must not default to base.en (a GGML-only name)."""
+    cfg = load_config(cli_dir=str(tmp_path), cli_backend="nemo")
+    assert cfg.backend == "nemo"
+    assert cfg.model == DEFAULT_NEMO_MODEL
+
+
+def test_nemo_backend_with_explicit_model_keeps_it(tmp_path: Path):
+    cfg = load_config(cli_dir=str(tmp_path), cli_backend="nemo", cli_model="nemo-canary-1b-v2")
+    assert cfg.model == "nemo-canary-1b-v2"
+
+
+def test_non_nemo_backend_still_defaults_to_base_en(tmp_path: Path):
+    cfg = load_config(cli_dir=str(tmp_path), cli_backend="vulkan")
+    assert cfg.model == "base.en"
 
 
 def test_config_precedence(tmp_path: Path):
@@ -94,6 +118,20 @@ def test_save_config(tmp_path: Path):
     assert reloaded.theme == "dark"
     assert reloaded.backend == "vulkan"
     assert reloaded.note_prefix == "[%Y/%m/%d %H:%M]"
+
+
+def test_save_config_raises_clear_error_when_target_is_a_directory(tmp_path: Path):
+    """Regression test: a Flatpak --filesystem=xdg-config/<file>:create grant can leave the
+    config path as an empty directory instead of a file, which silently broke every save
+    before this was pinned down. Saving must fail loudly and clearly, not just log a warning."""
+    from hey_whisper.config import save_config
+
+    blocked_path = tmp_path / "hey-whisper.conf"
+    blocked_path.mkdir()
+
+    cfg = AppConfig(notes_dir=tmp_path, config_file=blocked_path)
+    with pytest.raises(OSError, match="directory"):
+        save_config(cfg, blocked_path)
 
 
 def test_config_aliases_and_quotes(tmp_path: Path):

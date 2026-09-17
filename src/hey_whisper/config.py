@@ -22,6 +22,7 @@ Whisper backends:
 - auto: Detect Vulkan GPU acceleration; fallback to faster-whisper/CPU
 - vulkan: whisper.cpp with Vulkan GGML backend
 - faster-whisper: CTranslate2 backend
+- nemo: NVIDIA Parakeet / Canary models via onnx-asr (never auto-selected)
 """
 
 import os
@@ -35,6 +36,12 @@ from typing import Optional
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "hey-whisper.conf"
 FALLBACK_CONFIG_PATH = Path.home() / ".config" / "spoken-notes.conf"
 
+# Default active model when backend=nemo is set with no explicit model: "base.en"
+# (the overall default) is a GGML-only name onnx_asr can't load, so pairing it
+# with backend=nemo would fail every transcription and silently fall back to
+# faster-whisper. Mirrors transcriber.NEMO_ONNX_MODELS[3].
+DEFAULT_NEMO_MODEL = "nemo-parakeet-tdt-0.6b-v3"
+
 
 @dataclass
 class AppConfig:
@@ -44,7 +51,7 @@ class AppConfig:
     silence_timeout: float = 1.5  # seconds
     silence_threshold: float = 500.0  # RMS audio energy threshold
     model: str = "base.en"
-    backend: str = "auto"  # "auto", "vulkan", "faster-whisper"
+    backend: str = "auto"  # "auto", "vulkan", "faster-whisper", "nemo"
     theme: str = "auto"  # "auto", "light", "dark"
     note_prefix: str = "[%Y-%m-%d %H:%M %Z]"  # Note timestamp / prefix format
     device: str = "auto"
@@ -200,7 +207,7 @@ def load_config(
 
     # Resolve backend: CLI > config file > default "auto"
     backend_candidate = (_clean_str(cli_backend) or file_backend or "auto").lower().strip()
-    if backend_candidate not in ("auto", "vulkan", "faster-whisper"):
+    if backend_candidate not in ("auto", "vulkan", "faster-whisper", "nemo"):
         backend_candidate = "auto"
 
     # Resolve theme: CLI > config file > default "auto"
@@ -214,7 +221,13 @@ def load_config(
         else (file_silence_timeout if file_silence_timeout is not None else 1.5)
     )
 
-    model = _clean_str(cli_model) or file_model or "base.en"
+    explicit_model = _clean_str(cli_model) or file_model
+    if explicit_model:
+        model = explicit_model
+    elif backend_candidate == "nemo":
+        model = DEFAULT_NEMO_MODEL
+    else:
+        model = "base.en"
     hotkey = file_hotkey or "Space"
     silence_threshold = file_silence_threshold if file_silence_threshold is not None else 500.0
     note_prefix = _clean_str(cli_note_prefix) or file_note_prefix or "[%Y-%m-%d %H:%M %Z]"
@@ -269,6 +282,12 @@ def save_config(config: AppConfig, path: Optional[Path] = None) -> Path:
     parser.set("recording", "silence_timeout", str(config.silence_timeout))
     parser.set("recording", "silence_threshold", str(config.silence_threshold))
 
+    if target.is_dir():
+        raise OSError(
+            f"Cannot save settings: '{target}' exists as a directory, not a file. "
+            "Remove or rename it, then try again."
+        )
+
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "w", encoding="utf-8") as f:
@@ -281,7 +300,7 @@ def save_config(config: AppConfig, path: Optional[Path] = None) -> Path:
         xdg_conf = os.environ.get("XDG_CONFIG_HOME")
         if xdg_conf:
             fallback = Path(xdg_conf) / "hey-whisper.conf"
-            if fallback.resolve() != target.resolve():
+            if fallback.resolve() != target.resolve() and not fallback.is_dir():
                 try:
                     fallback.parent.mkdir(parents=True, exist_ok=True)
                     with open(fallback, "w", encoding="utf-8") as f:

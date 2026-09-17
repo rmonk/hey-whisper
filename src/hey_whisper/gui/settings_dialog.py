@@ -1,12 +1,13 @@
 """Configuration dialog for Hey Whisper settings."""
 
 import logging
+import os
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -21,6 +22,13 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QDialogButtonBox,
     QWidget,
+    QListWidget,
+    QListWidgetItem,
+    QProgressBar,
+    QTabWidget,
+    QScrollArea,
+    QMessageBox,
+    QApplication,
 )
 
 from hey_whisper.config import AppConfig, save_config
@@ -32,6 +40,93 @@ from hey_whisper.gui.icons import (
     create_check_icon,
     create_keyboard_icon,
 )
+from hey_whisper.transcriber import (
+    KNOWN_GGML_MODELS,
+    NEMO_ONNX_MODELS,
+    ModelInfo,
+    NemoModelInfo,
+    VulkanStatus,
+    delete_model,
+    delete_nemo_model,
+    download_nemo_model,
+    get_ggml_model_path,
+    get_vulkan_status,
+    list_models,
+    list_nemo_models,
+)
+
+
+def _format_size(size_bytes: Optional[int]) -> str:
+    if not size_bytes:
+        return ""
+    mb = size_bytes / (1024 * 1024)
+    if mb >= 1024:
+        return f"{mb / 1024:.2f} GB"
+    return f"{mb:.0f} MB"
+
+
+class ModelDownloadWorker(QThread):
+    """Background worker that downloads a GGML model without blocking the UI."""
+
+    progress = pyqtSignal(int, int)
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, model_name: str):
+        super().__init__()
+        self.model_name = model_name
+
+    def run(self):
+        try:
+            get_ggml_model_path(
+                self.model_name,
+                progress_callback=lambda done, total: self.progress.emit(done, total),
+            )
+            self.finished.emit(self.model_name)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class NemoDownloadWorker(QThread):
+    """Background worker that downloads a Parakeet/Canary onnx-asr model without blocking the UI.
+
+    Unlike ModelDownloadWorker, onnx-asr/huggingface_hub don't expose a simple byte-progress
+    hook here, so callers should show an indeterminate progress indicator while this runs.
+    """
+
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, model_name: str):
+        super().__init__()
+        self.model_name = model_name
+
+    def run(self):
+        try:
+            download_nemo_model(self.model_name)
+            self.finished.emit(self.model_name)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class VulkanProbeWorker(QThread):
+    """Background worker that checks Vulkan availability without blocking the UI."""
+
+    finished = pyqtSignal(object)
+
+    def run(self):
+        try:
+            status = get_vulkan_status(probe=True)
+        except Exception as e:
+            status = VulkanStatus(whisper_cli_found=False, detail=f"Vulkan check failed: {e}")
+        self.finished.emit(status)
+
+
+# Keeps a live Python reference to any background worker QThread whose owning
+# SettingsDialog closed before the thread finished, so it can't be garbage
+# collected mid-run (see SettingsDialog._cleanup_workers). Entries remove
+# themselves once the worker's finished/error signal fires.
+_ORPHANED_WORKERS: set = set()
 
 
 class SettingsDialog(QDialog):
@@ -55,15 +150,49 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("Hey Whisper - Configuration")
         self.setWindowIcon(get_app_icon())
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(600)
+        self.resize(600, 640)
         self.setModal(True)
 
         self._init_ui()
         self.apply_theme(self._colors)
 
+    @staticmethod
+    def _make_scroll_tab(content: QWidget) -> QScrollArea:
+        """Wrap a tab page's content in a scroll area so the dialog's own
+        height stays fixed no matter how many groups a tab ends up holding."""
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        return scroll
+
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(14)
+
+        self.tabs = QTabWidget()
+        general_page = self._build_general_tab()
+        engine_page = self._build_engine_tab()
+        self.tabs.addTab(self._make_scroll_tab(general_page), "General")
+        self.tabs.addTab(self._make_scroll_tab(engine_page), "Engine")
+        main_layout.addWidget(self.tabs)
+
+        # Dialog Buttons (shared across tabs)
+        btn_box = QDialogButtonBox()
+        self.save_btn = btn_box.addButton(" Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
+        self.save_btn.setIconSize(QSize(14, 14))
+        self.cancel_btn = btn_box.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_box.accepted.connect(self._save_and_apply)
+        btn_box.rejected.connect(self.reject)
+        main_layout.addWidget(btn_box)
+
+    def _build_general_tab(self) -> QWidget:
+        page = QWidget()
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(14)
 
         # 1. Recording Mode & Behavior Group
@@ -141,8 +270,8 @@ class SettingsDialog(QDialog):
         self._update_prefix_preview()
         main_layout.addWidget(prefix_group)
 
-        # 4. Hotkeys & Shortcuts Group
-        hotkey_group = QGroupBox("Keyboard Shortcuts")
+        # 4. Hotkeys, Shortcuts && Appearance Group
+        hotkey_group = QGroupBox("Shortcuts && Appearance")
         hotkey_form = QFormLayout(hotkey_group)
         hotkey_form.setSpacing(10)
 
@@ -173,36 +302,118 @@ class SettingsDialog(QDialog):
             self.hotkey_combo.addItem(self.config.hotkey)
             self.hotkey_combo.setCurrentText(self.config.hotkey)
         hotkey_form.addRow("In-App Hotkey:", self.hotkey_combo)
-        main_layout.addWidget(hotkey_group)
-
-        # 5. Appearance & Engine Group
-        app_group = QGroupBox("Appearance && Engine")
-        app_form = QFormLayout(app_group)
-        app_form.setSpacing(10)
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Auto (Follow OS)", "Dark Theme", "Light Theme"])
         theme_map = {"auto": 0, "dark": 1, "light": 2}
         self.theme_combo.setCurrentIndex(theme_map.get(self.config.theme, 0))
-        app_form.addRow("Color Theme:", self.theme_combo)
+        hotkey_form.addRow("Color Theme:", self.theme_combo)
+
+        main_layout.addWidget(hotkey_group)
+        main_layout.addStretch()
+        return page
+
+    def _build_engine_tab(self) -> QWidget:
+        page = QWidget()
+        main_layout = QVBoxLayout(page)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(14)
+
+        # 1. Backend & Active Model Group
+        app_group = QGroupBox("Backend && Active Model")
+        app_form = QFormLayout(app_group)
+        app_form.setSpacing(10)
 
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(["Auto (Vulkan GPU if available)", "Vulkan GPU Acceleration", "faster-whisper (CPU/CUDA)"])
-        backend_map = {"auto": 0, "vulkan": 1, "faster-whisper": 2}
+        self.backend_combo.addItems([
+            "Auto (Vulkan GPU if available)",
+            "Vulkan GPU Acceleration",
+            "faster-whisper (CPU/CUDA)",
+            "NVIDIA Parakeet / Canary (onnx-asr)",
+        ])
+        backend_map = {"auto": 0, "vulkan": 1, "faster-whisper": 2, "nemo": 3}
         self.backend_combo.setCurrentIndex(backend_map.get(self.config.backend, 0))
         app_form.addRow("Whisper Backend:", self.backend_combo)
 
+        known_model_names = KNOWN_GGML_MODELS + NEMO_ONNX_MODELS
+        self.active_model_combo = QComboBox()
+        self.active_model_combo.addItems(known_model_names)
+        if self.config.model in known_model_names:
+            self.active_model_combo.setCurrentText(self.config.model)
+        else:
+            self.active_model_combo.addItem(self.config.model)
+            self.active_model_combo.setCurrentText(self.config.model)
+        app_form.addRow("Active Model:", self.active_model_combo)
+
         main_layout.addWidget(app_group)
 
-        # 6. Dialog Buttons
-        btn_box = QDialogButtonBox()
-        self.save_btn = btn_box.addButton(" Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
-        self.save_btn.setIconSize(QSize(14, 14))
-        self.cancel_btn = btn_box.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
-        btn_box.accepted.connect(self._save_and_apply)
-        btn_box.rejected.connect(self.reject)
-        main_layout.addWidget(btn_box)
+        # 2. Model Management Group (Whisper GGML + NVIDIA Parakeet/Canary, one list)
+        models_group = QGroupBox("Models (Loaded / Available)")
+        models_layout = QVBoxLayout(models_group)
+        models_layout.setSpacing(8)
+
+        self.model_list = QListWidget()
+        self.model_list.setFixedHeight(220)
+        self.model_list.currentRowChanged.connect(self._on_model_row_changed)
+        models_layout.addWidget(self.model_list)
+
+        self.model_download_progress = QProgressBar()
+        self.model_download_progress.setRange(0, 100)
+        self.model_download_progress.setVisible(False)
+        models_layout.addWidget(self.model_download_progress)
+
+        self.model_status_label = QLabel("")
+        self.model_status_label.setWordWrap(True)
+        models_layout.addWidget(self.model_status_label)
+
+        model_btn_row = QHBoxLayout()
+        model_btn_row.addStretch()
+
+        self.download_model_btn = QPushButton("Download")
+        self.download_model_btn.clicked.connect(self._download_selected_model)
+        model_btn_row.addWidget(self.download_model_btn)
+
+        self.delete_model_btn = QPushButton("Delete")
+        self.delete_model_btn.clicked.connect(self._delete_selected_model)
+        model_btn_row.addWidget(self.delete_model_btn)
+
+        self.set_active_model_btn = QPushButton("Set Active")
+        self.set_active_model_btn.clicked.connect(self._set_model_active)
+        model_btn_row.addWidget(self.set_active_model_btn)
+
+        models_layout.addLayout(model_btn_row)
+        main_layout.addWidget(models_group)
+
+        self._download_worker: Optional[Union[ModelDownloadWorker, NemoDownloadWorker]] = None
+        self._refresh_model_list()
+
+        # 3. Vulkan GPU Status Group
+        vulkan_group = QGroupBox("Vulkan GPU Status")
+        vulkan_layout = QVBoxLayout(vulkan_group)
+        vulkan_layout.setSpacing(6)
+
+        self.vulkan_status_label = QLabel("Checking Vulkan status...")
+        self.vulkan_status_label.setWordWrap(True)
+        vulkan_layout.addWidget(self.vulkan_status_label)
+
+        self.vulkan_device_label = QLabel("")
+        self.vulkan_device_label.setWordWrap(True)
+        vulkan_layout.addWidget(self.vulkan_device_label)
+
+        vulkan_btn_row = QHBoxLayout()
+        vulkan_btn_row.addStretch()
+        self.recheck_vulkan_btn = QPushButton("Re-check Vulkan")
+        self.recheck_vulkan_btn.clicked.connect(self._check_vulkan_status)
+        vulkan_btn_row.addWidget(self.recheck_vulkan_btn)
+        vulkan_layout.addLayout(vulkan_btn_row)
+
+        main_layout.addWidget(vulkan_group)
+
+        self._vulkan_probe_worker: Optional[VulkanProbeWorker] = None
+        self._check_vulkan_status()
+
+        main_layout.addStretch()
+        return page
 
     def _on_mode_combo_changed(self, index: int):
         is_silence = (index == 2)
@@ -213,6 +424,232 @@ class SettingsDialog(QDialog):
         chosen = QFileDialog.getExistingDirectory(self, "Select Notes Storage Directory", self.folder_edit.text())
         if chosen:
             self.folder_edit.setText(chosen)
+
+    def _add_model_header(self, text: str):
+        """Add a non-selectable section header row to the unified model list."""
+        header = QListWidgetItem(text)
+        header.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.model_list.addItem(header)
+
+    def _add_model_item(self, kind: str, info: Union[ModelInfo, NemoModelInfo]):
+        label = f"{'✓' if info.downloaded else '·'} {info.name}"
+        if info.downloaded:
+            label += f"  ({_format_size(info.size_bytes)})"
+        else:
+            label += "  — not downloaded"
+        if kind == "ggml" and info.name == "base.en":
+            label += "  (default)"
+        if info.name == self.config.model:
+            label += "  [active]"
+        item = QListWidgetItem(label)
+        item.setData(Qt.ItemDataRole.UserRole, (kind, info.name))
+        self.model_list.addItem(item)
+        if info.name == self.active_model_combo.currentText():
+            self.model_list.setCurrentItem(item)
+
+    def _refresh_model_list(self):
+        """Repopulate the unified model list with current on-disk / cache download status."""
+        self.model_list.blockSignals(True)
+        self.model_list.clear()
+
+        self._add_model_header("Whisper (Vulkan / faster-whisper)")
+        for info in list_models():
+            self._add_model_item("ggml", info)
+
+        self._add_model_header("NVIDIA Parakeet && Canary (onnx-asr)")
+        for info in list_nemo_models():
+            self._add_model_item("nemo", info)
+
+        self.model_list.blockSignals(False)
+        self._on_model_row_changed(self.model_list.currentRow())
+
+    def _selected_model_entry(self) -> Optional[Tuple[str, Union[ModelInfo, NemoModelInfo]]]:
+        item = self.model_list.currentItem()
+        if not item:
+            return None
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return None
+        kind, name = data
+        infos = list_models() if kind == "ggml" else list_nemo_models()
+        for info in infos:
+            if info.name == name:
+                return kind, info
+        return None
+
+    def _on_model_row_changed(self, _row: int):
+        entry = self._selected_model_entry()
+        busy = self._download_worker is not None
+        if entry is None:
+            self.model_status_label.setText("")
+            self.download_model_btn.setEnabled(False)
+            self.delete_model_btn.setEnabled(False)
+            self.set_active_model_btn.setEnabled(False)
+            return
+        _kind, info = entry
+        self.download_model_btn.setEnabled(not info.downloaded and not busy)
+        self.delete_model_btn.setEnabled(info.downloaded and not busy)
+        self.set_active_model_btn.setEnabled(not busy)
+        if info.downloaded:
+            self.model_status_label.setText(f"{info.name}: downloaded ({_format_size(info.size_bytes)})")
+        else:
+            self.model_status_label.setText(f"{info.name}: not downloaded")
+
+    def _download_selected_model(self):
+        entry = self._selected_model_entry()
+        if entry is None or self._download_worker is not None:
+            return
+        kind, info = entry
+        if info.downloaded:
+            return
+
+        self.download_model_btn.setEnabled(False)
+        self.delete_model_btn.setEnabled(False)
+        self.set_active_model_btn.setEnabled(False)
+        self.model_download_progress.setVisible(True)
+
+        if kind == "ggml":
+            self.model_download_progress.setRange(0, 100)
+            self.model_download_progress.setValue(0)
+            self.model_status_label.setText(f"Downloading {info.name}...")
+            worker: Union[ModelDownloadWorker, NemoDownloadWorker] = ModelDownloadWorker(info.name)
+            worker.progress.connect(self._on_download_progress)
+        else:
+            self.model_download_progress.setRange(0, 0)  # indeterminate: no byte-level progress hook
+            self.model_status_label.setText(f"Downloading {info.name}... (this can take a while for larger models)")
+            worker = NemoDownloadWorker(info.name)
+
+        worker.finished.connect(self._on_download_finished)
+        worker.error.connect(self._on_download_error)
+        self._download_worker = worker
+        worker.start()
+
+    def _on_download_progress(self, downloaded: int, total: int):
+        if total > 0:
+            pct = int(downloaded * 100 / total)
+            self.model_download_progress.setValue(pct)
+            self.model_status_label.setText(f"Downloading... {_format_size(downloaded)} / {_format_size(total)}")
+        else:
+            self.model_status_label.setText(f"Downloading... {_format_size(downloaded)}")
+
+    def _on_download_finished(self, model_name: str):
+        self._download_worker = None
+        self.model_download_progress.setRange(0, 100)
+        self.model_download_progress.setVisible(False)
+        self._refresh_model_list()
+
+    def _on_download_error(self, message: str):
+        self._download_worker = None
+        self.model_download_progress.setRange(0, 100)
+        self.model_download_progress.setVisible(False)
+        self.model_status_label.setText(f"Download failed: {message}")
+        logger.warning("Model download failed: %s", message)
+        self._on_model_row_changed(self.model_list.currentRow())
+
+    def _delete_selected_model(self):
+        entry = self._selected_model_entry()
+        if entry is None:
+            return
+        kind, info = entry
+        if not info.downloaded:
+            return
+        try:
+            if kind == "ggml":
+                delete_model(info.name)
+            else:
+                delete_nemo_model(info.name)
+        except Exception as e:
+            logger.warning("Could not delete model %s: %s", info.name, e)
+            self.model_status_label.setText(f"Delete failed: {e}")
+            return
+        self._refresh_model_list()
+
+    def _set_model_active(self):
+        entry = self._selected_model_entry()
+        if entry is None:
+            return
+        kind, info = entry
+        if self.active_model_combo.findText(info.name) < 0:
+            self.active_model_combo.addItem(info.name)
+        self.active_model_combo.setCurrentText(info.name)
+        if kind == "nemo":
+            self.backend_combo.setCurrentIndex(3)  # nemo
+        elif self.backend_combo.currentIndex() == 3:
+            # A GGML model can't run on the nemo backend; fall back to auto-detection.
+            self.backend_combo.setCurrentIndex(0)
+        self._refresh_model_list()
+
+    def _check_vulkan_status(self):
+        if self._vulkan_probe_worker is not None:
+            return
+        self.recheck_vulkan_btn.setEnabled(False)
+        self.vulkan_status_label.setText("Checking Vulkan status...")
+        self.vulkan_device_label.setText("")
+
+        worker = VulkanProbeWorker()
+        worker.finished.connect(self._on_vulkan_status_ready)
+        self._vulkan_probe_worker = worker
+        worker.start()
+
+    def _on_vulkan_status_ready(self, status: VulkanStatus):
+        self._vulkan_probe_worker = None
+        self.recheck_vulkan_btn.setEnabled(True)
+
+        if not status.whisper_cli_found:
+            self.vulkan_status_label.setText("Vulkan: whisper-cli not found — Vulkan backend unavailable")
+        elif status.working:
+            self.vulkan_status_label.setText("Vulkan: enabled and working")
+        else:
+            self.vulkan_status_label.setText(f"Vulkan: not confirmed — {status.detail}")
+
+        device_lines = []
+        if status.device_name:
+            device_lines.append(f"In use: {status.device_name}")
+        if status.system_devices:
+            device_lines.append("System devices: " + ", ".join(status.system_devices))
+        self.vulkan_device_label.setText("\n".join(device_lines))
+
+    def _cleanup_workers(self):
+        """Detach any in-flight background workers before the dialog closes.
+
+        Deliberately never QThread.terminate() here: it can kill a thread mid
+        Python bytecode (e.g. mid signal-emit), corrupting interpreter state and
+        crashing the process. Disconnecting every signal first makes a
+        still-running worker's eventual finish/error emission a harmless no-op.
+        A short bounded wait lets fast probes exit cleanly without blocking the
+        UI on a slow download; if a worker is still running after that, its
+        Python wrapper is kept alive in _ORPHANED_WORKERS until it finishes on
+        its own, since letting Python garbage-collect a QThread object while its
+        OS thread is still executing (e.g. about to emit a signal) can crash
+        the process too.
+        """
+        for attr in ("_download_worker", "_vulkan_probe_worker"):
+            worker = getattr(self, attr, None)
+            if worker is None:
+                continue
+            signals = [getattr(worker, name, None) for name in ("finished", "error", "progress")]
+            for sig in signals:
+                if sig is not None:
+                    try:
+                        sig.disconnect()
+                    except TypeError:
+                        pass
+            if worker.isRunning():
+                worker.wait(1000)
+            if worker.isRunning():
+                _ORPHANED_WORKERS.add(worker)
+
+                def _release(w=worker):
+                    _ORPHANED_WORKERS.discard(w)
+
+                for sig in signals:
+                    if sig is not None:
+                        sig.connect(_release)
+            setattr(self, attr, None)
+
+    def done(self, result: int):
+        self._cleanup_workers()
+        super().done(result)
 
     def _update_prefix_preview(self):
         tpl = self.prefix_edit.text().strip() or DEFAULT_NOTE_PREFIX
@@ -237,14 +674,29 @@ class SettingsDialog(QDialog):
         themes = ["auto", "dark", "light"]
         self.config.theme = themes[self.theme_combo.currentIndex()]
 
-        backends = ["auto", "vulkan", "faster-whisper"]
+        backends = ["auto", "vulkan", "faster-whisper", "nemo"]
         self.config.backend = backends[self.backend_combo.currentIndex()]
+
+        self.config.model = self.active_model_combo.currentText().strip() or self.config.model
 
         # Persist to disk
         try:
             save_config(self.config)
         except Exception as e:
             logger.warning("Could not persist configuration to disk: %s", e)
+            app = QApplication.instance()
+            headless = (
+                (app is not None and app.platformName() == "offscreen")
+                or os.environ.get("CI")
+                or os.environ.get("QT_QPA_PLATFORM") == "offscreen"
+            )
+            if not headless:
+                QMessageBox.warning(
+                    self,
+                    "Settings Not Saved",
+                    "Your settings will apply for this session, but could not be written to disk "
+                    f"and will revert the next time Hey Whisper starts.\n\nError: {e}",
+                )
 
         self.settings_applied.emit(self.config)
         self.accept()
@@ -256,6 +708,37 @@ class SettingsDialog(QDialog):
             QDialog {{
                 background-color: {colors.window_bg};
                 color: {colors.text_primary};
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {colors.border};
+                border-radius: 6px;
+                top: -1px;
+            }}
+            QTabBar::tab {{
+                background-color: {colors.surface_bg};
+                color: {colors.text_secondary};
+                border: 1px solid {colors.border};
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 7px 18px;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {colors.card_bg};
+                color: {colors.accent};
+                font-weight: bold;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {colors.tree_hover_bg};
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: transparent;
             }}
             QGroupBox {{
                 background-color: {colors.card_bg};

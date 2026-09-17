@@ -20,6 +20,9 @@ dependencies = [
 test = [
     "pytest>=8.0.0",
 ]
+nemo = [
+    "onnx-asr[cpu,hub]>=0.11.0",
+]
 
 [project.scripts]
 hey-whisper = "hey_whisper.main:main"
