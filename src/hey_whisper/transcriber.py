@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import wave
 from dataclasses import dataclass, field
@@ -162,11 +163,29 @@ def get_ggml_model_path(
     print(f"Downloading Vulkan-compatible GGML model from {url}...")
     temp_target = target_file.with_suffix(".tmp")
 
+    # urlretrieve's default block size is 8192 bytes, so a large model (medium.en
+    # is ~1.5GB) would otherwise call progress_callback on the order of 180,000
+    # times over the whole download. For a GUI callback that emits a cross-thread
+    # Qt signal, that floods the receiving thread's event queue faster than it
+    # can drain, which has caused a hard crash (no Python traceback - consistent
+    # with an OOM kill) right around when a large download finishes. Throttle to
+    # a UI-appropriate rate instead, while still always reporting the first and
+    # final (100%) updates so the caller's progress display stays accurate.
+    MIN_PROGRESS_INTERVAL = 0.1  # seconds
+    last_emit_time = 0.0
+
     def _reporthook(block_num: int, block_size: int, total_size: int) -> None:
-        if progress_callback is not None:
-            downloaded = block_num * block_size
-            if total_size > 0:
-                downloaded = min(downloaded, total_size)
+        nonlocal last_emit_time
+        if progress_callback is None:
+            return
+        downloaded = block_num * block_size
+        if total_size > 0:
+            downloaded = min(downloaded, total_size)
+        now = time.monotonic()
+        is_first = block_num == 0
+        is_last = total_size > 0 and downloaded >= total_size
+        if is_first or is_last or (now - last_emit_time) >= MIN_PROGRESS_INTERVAL:
+            last_emit_time = now
             progress_callback(downloaded, max(total_size, 0))
 
     try:
