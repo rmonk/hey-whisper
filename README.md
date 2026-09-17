@@ -144,14 +144,14 @@ A complete Freedesktop / Flatpak manifest is included in [`org.heywhisper.HeyWhi
 
 ### Install with Auto-Updates (Recommended)
 
-Every tagged release publishes to a self-hosted Flatpak repo via GitHub Pages. Add it once and `flatpak update` will pick up every new release from then on — no manual downloads:
+Every tagged release publishes to a self-hosted, GPG-signed Flatpak repo via GitHub Pages. Add it once and `flatpak update` will pick up every new release from then on — no manual downloads:
 
 ```bash
-flatpak remote-add --user --no-gpg-verify hey-whisper https://rmonk.github.io/hey-whisper/repo
+flatpak remote-add --user --if-not-exists --from hey-whisper https://rmonk.github.io/hey-whisper/hey-whisper.flatpakrepo
 flatpak install --user hey-whisper org.heywhisper.HeyWhisper
 ```
 
-This repo is unsigned (no GPG key), relying on HTTPS/GitHub for transport authenticity rather than a signed OSTree commit chain — reasonable for a small self-hosted repo, but worth knowing if you have stricter trust requirements.
+`--from` reads the `.flatpakrepo` file, which embeds the repo's GPG public key, so the remote is added with signature verification already configured — every commit and the repo summary are signed, no `--no-gpg-verify` needed. Prefer to add the key yourself instead of trusting the `--from` file sight-unseen? The same public key is checked into this repo at [`hey-whisper-repo-signing-key.asc`](hey-whisper-repo-signing-key.asc) (fingerprint `3686 3357 ED81 735D 5A86  D3AD DEAE 7A2A B6AF 1853`) — import it with `flatpak remote-add --gpg-import=hey-whisper-repo-signing-key.asc hey-whisper https://rmonk.github.io/hey-whisper/repo`.
 
 ### One-Off Install from a Downloaded Bundle
 
