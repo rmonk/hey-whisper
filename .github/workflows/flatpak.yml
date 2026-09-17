@@ -182,6 +182,30 @@ jobs:
           GPGKey=${GPG_KEY_B64}
           EOF
 
+          # Regenerated on every publish so the landing page can never go stale
+          # the way a one-off manually-created index.html did (it kept
+          # recommending --no-gpg-verify long after the repo was GPG-signed,
+          # since nothing was updating it).
+          cat > repo/index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head><title>Hey Whisper Flatpak Repo</title></head>
+          <body>
+          <h1>Hey Whisper Flatpak Repository</h1>
+          <p>Self-hosted, GPG-signed Flatpak repository for
+          <a href="https://github.com/${GITHUB_REPOSITORY}">Hey Whisper</a>. Add it once and
+          <code>flatpak update</code> picks up every new release automatically.</p>
+          <pre>flatpak remote-add --user --if-not-exists --from hey-whisper https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/hey-whisper.flatpakrepo
+          flatpak install --user hey-whisper org.heywhisper.HeyWhisper</pre>
+          <p><code>--from</code> reads the <a href="hey-whisper.flatpakrepo">.flatpakrepo file</a>, which embeds
+          the repo's GPG public key, so signature verification is configured automatically - no
+          <code>--no-gpg-verify</code> needed. The public key is also available directly at
+          <a href="repo/hey-whisper-repo-signing-key.asc">repo/hey-whisper-repo-signing-key.asc</a>.</p>
+          <p>Latest published version: <strong>${{ github.ref_name }}</strong></p>
+          </body>
+          </html>
+          EOF
+
           PUBLISH_DIR="${RUNNER_TEMP}/gh-pages-publish"
           rm -rf "${PUBLISH_DIR}"
           if git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
@@ -194,6 +218,7 @@ jobs:
 
           rsync -a --delete --exclude='.lock' repo/ "${PUBLISH_DIR}/repo/"
           cp repo/hey-whisper.flatpakrepo "${PUBLISH_DIR}/hey-whisper.flatpakrepo"
+          cp repo/index.html "${PUBLISH_DIR}/index.html"
 
           cd "${PUBLISH_DIR}"
           git config user.name "github-actions[bot]"
