@@ -103,14 +103,106 @@ jobs:
         run: |
           flatpak install --user -y --noninteractive flathub org.kde.Platform//6.6 org.kde.Sdk//6.6
 
+      - name: Import GPG Signing Key
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -m 700 -p "${RUNNER_TEMP}/gpg-homedir"
+          echo "${FLATPAK_GPG_PRIVATE_KEY}" | gpg --homedir "${RUNNER_TEMP}/gpg-homedir" --batch --import
+          FPR=$(gpg --homedir "${RUNNER_TEMP}/gpg-homedir" --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+          if [ -z "${FPR}" ]; then
+            echo "::error::Could not determine fingerprint of imported GPG key"
+            exit 1
+          fi
+          echo "GPG_HOMEDIR=${RUNNER_TEMP}/gpg-homedir" >> "$GITHUB_ENV"
+          echo "GPG_KEY_FPR=${FPR}" >> "$GITHUB_ENV"
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+
+      - name: Restore Published Flatpak Repo (for incremental updates)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          # `flatpak update` needs prior releases' commit history present in the
+          # repo, not just the latest one, so clients can update incrementally.
+          # Seed repo/ from the gh-pages branch (which we publish it to) before
+          # flatpak-builder adds this release's commit on top of that history.
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            git fetch origin gh-pages --quiet
+            git worktree add --detach /tmp/gh-pages-seed origin/gh-pages
+            mkdir -p repo
+            if [ -d /tmp/gh-pages-seed/repo ]; then
+              cp -a /tmp/gh-pages-seed/repo/. repo/
+            fi
+            git worktree remove /tmp/gh-pages-seed --force
+          else
+            echo "No gh-pages branch found; starting a fresh repo."
+            mkdir -p repo
+          fi
+
       - name: Build Flatpak Application
         run: |
-          flatpak-builder --user --disable-rofiles-fuse --force-clean --repo=repo build-dir org.heywhisper.HeyWhisper.yaml
+          SIGN_ARGS=()
+          if [ -n "${GPG_KEY_FPR:-}" ]; then
+            SIGN_ARGS=(--gpg-sign="${GPG_KEY_FPR}" --gpg-homedir="${GPG_HOMEDIR}")
+          fi
+          flatpak-builder --user --disable-rofiles-fuse --force-clean --repo=repo "${SIGN_ARGS[@]}" build-dir org.heywhisper.HeyWhisper.yaml
 
       - name: Create Standalone Flatpak Bundle (.flatpak)
         run: |
-          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo hey-whisper.flatpak org.heywhisper.HeyWhisper
+          SIGN_ARGS=()
+          if [ -n "${GPG_KEY_FPR:-}" ]; then
+            SIGN_ARGS=(--gpg-sign="${GPG_KEY_FPR}" --gpg-homedir="${GPG_HOMEDIR}")
+          fi
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo "${SIGN_ARGS[@]}" repo hey-whisper.flatpak org.heywhisper.HeyWhisper
           ls -lh hey-whisper.flatpak
+
+      - name: Publish Flatpak Repo to GitHub Pages (gh-pages branch)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          # This is what makes installs auto-update: anyone who ran `flatpak
+          # remote-add` against this repo (rather than installing the standalone
+          # bundle above) picks up every new tagged release via `flatpak update`.
+          flatpak build-update-repo --gpg-sign="${GPG_KEY_FPR}" --gpg-homedir="${GPG_HOMEDIR}" repo
+
+          gpg --homedir "${GPG_HOMEDIR}" --batch --yes --export --armor "${GPG_KEY_FPR}" > repo/hey-whisper-repo-signing-key.asc
+          GPG_KEY_B64=$(gpg --homedir "${GPG_HOMEDIR}" --export "${GPG_KEY_FPR}" | base64 -w0)
+
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          cat > repo/hey-whisper.flatpakrepo <<EOF
+          [Flatpak Repo]
+          Title=Hey Whisper
+          Url=https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/repo
+          Comment=Hey Whisper voice notes app
+          Description=Self-hosted Flatpak repository for Hey Whisper (auto-updating installs outside Flathub).
+          Homepage=https://github.com/${GITHUB_REPOSITORY}
+          Icon=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/org.heywhisper.HeyWhisper.svg
+          GPGKey=${GPG_KEY_B64}
+          EOF
+
+          PUBLISH_DIR="${RUNNER_TEMP}/gh-pages-publish"
+          rm -rf "${PUBLISH_DIR}"
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            git clone --branch gh-pages --single-branch --depth=1 \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${PUBLISH_DIR}"
+          else
+            mkdir -p "${PUBLISH_DIR}"
+            git -C "${PUBLISH_DIR}" init -q -b gh-pages
+          fi
+
+          rsync -a --delete --exclude='.lock' repo/ "${PUBLISH_DIR}/repo/"
+          cp repo/hey-whisper.flatpakrepo "${PUBLISH_DIR}/hey-whisper.flatpakrepo"
+
+          cd "${PUBLISH_DIR}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No repo changes to publish."
+          else
+            git commit -q -m "Update Flatpak repo for ${{ github.ref_name }}"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Flatpak as Workflow Artifact
         uses: actions/upload-artifact@v4
@@ -180,3 +272,8 @@ jobs:
           exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean Up GPG Signing Key
+        if: always()
+        run: |
+          rm -rf "${RUNNER_TEMP}/gpg-homedir"
