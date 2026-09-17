@@ -2,10 +2,12 @@
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 try:
     import pytest
 except ImportError:
     pytest = None
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 # Set offscreen platform for headless test runs
@@ -197,6 +199,62 @@ def test_settings_dialog_and_config_button(qapp, tmp_path: Path):
     win.shortcuts_manager.stop()
     win.close()
     win.deleteLater()
+    qapp.processEvents()
+
+
+def test_settings_dialog_unified_model_list(qapp, tmp_path, monkeypatch):
+    """Whisper and NVIDIA models share one list, base.en is flagged default, and delete works."""
+    from hey_whisper.gui.settings_dialog import SettingsDialog
+    from hey_whisper import transcriber as t
+
+    ggml_cache = tmp_path / "ggml"
+    ggml_cache.mkdir()
+    monkeypatch.setattr(t, "CACHE_DIR", ggml_cache)
+    (ggml_cache / "ggml-base.en.bin").write_bytes(b"0" * 2_000_000)
+
+    empty_cache_info = MagicMock()
+    empty_cache_info.repos = []
+    monkeypatch.setattr("huggingface_hub.scan_cache_dir", lambda cache_dir=None: empty_cache_info)
+
+    cfg = AppConfig(notes_dir=tmp_path, model="base.en")
+    _, colors = get_theme_colors("light")
+    dlg = SettingsDialog(config=cfg, current_colors=colors)
+
+    def find_item(kind: str, name: str):
+        for row in range(dlg.model_list.count()):
+            item = dlg.model_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == (kind, name):
+                return item
+        return None
+
+    # Both engines' section headers are present as non-selectable rows.
+    header_texts = [
+        dlg.model_list.item(row).text()
+        for row in range(dlg.model_list.count())
+        if not (dlg.model_list.item(row).flags() & Qt.ItemFlag.ItemIsSelectable)
+    ]
+    assert any("Whisper" in h for h in header_texts)
+    assert any("Parakeet" in h for h in header_texts)
+
+    # A NVIDIA model is selectable in the same list as the Whisper models.
+    assert find_item("nemo", "nemo-parakeet-tdt-0.6b-v3") is not None
+
+    base_en_item = find_item("ggml", "base.en")
+    assert base_en_item is not None
+    assert "(default)" in base_en_item.text()
+    assert "[active]" in base_en_item.text()
+    assert "✓" in base_en_item.text()
+
+    # Deleting the selected downloaded model removes it via the unified Delete button.
+    dlg.model_list.setCurrentItem(base_en_item)
+    assert dlg.delete_model_btn.isEnabled()
+    dlg._delete_selected_model()
+
+    refreshed = find_item("ggml", "base.en")
+    assert "not downloaded" in refreshed.text()
+    assert not (ggml_cache / "ggml-base.en.bin").exists()
+
+    dlg.deleteLater()
     qapp.processEvents()
 
 

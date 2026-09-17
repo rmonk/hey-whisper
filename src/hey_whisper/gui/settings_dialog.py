@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -337,13 +337,13 @@ class SettingsDialog(QDialog):
 
         main_layout.addWidget(app_group)
 
-        # 2. Whisper Model Management Group
-        models_group = QGroupBox("Whisper Models (Loaded / Available)")
+        # 2. Model Management Group (Whisper GGML + NVIDIA Parakeet/Canary, one list)
+        models_group = QGroupBox("Models (Loaded / Available)")
         models_layout = QVBoxLayout(models_group)
         models_layout.setSpacing(8)
 
         self.model_list = QListWidget()
-        self.model_list.setFixedHeight(140)
+        self.model_list.setFixedHeight(220)
         self.model_list.currentRowChanged.connect(self._on_model_row_changed)
         models_layout.addWidget(self.model_list)
 
@@ -368,64 +368,16 @@ class SettingsDialog(QDialog):
         model_btn_row.addWidget(self.delete_model_btn)
 
         self.set_active_model_btn = QPushButton("Set Active")
-        self.set_active_model_btn.clicked.connect(self._set_ggml_model_active)
+        self.set_active_model_btn.clicked.connect(self._set_model_active)
         model_btn_row.addWidget(self.set_active_model_btn)
 
         models_layout.addLayout(model_btn_row)
         main_layout.addWidget(models_group)
 
-        self._model_download_worker: Optional[ModelDownloadWorker] = None
+        self._download_worker: Optional[Union[ModelDownloadWorker, NemoDownloadWorker]] = None
         self._refresh_model_list()
 
-        # 3. NVIDIA Parakeet / Canary Model Management Group
-        nemo_group = QGroupBox("NVIDIA Parakeet && Canary Models (via onnx-asr)")
-        nemo_layout = QVBoxLayout(nemo_group)
-        nemo_layout.setSpacing(8)
-
-        self.nemo_model_list = QListWidget()
-        self.nemo_model_list.setFixedHeight(110)
-        self.nemo_model_list.currentRowChanged.connect(self._on_nemo_row_changed)
-        nemo_layout.addWidget(self.nemo_model_list)
-
-        self.nemo_download_progress = QProgressBar()
-        self.nemo_download_progress.setRange(0, 100)
-        self.nemo_download_progress.setVisible(False)
-        nemo_layout.addWidget(self.nemo_download_progress)
-
-        self.nemo_status_label = QLabel("")
-        self.nemo_status_label.setWordWrap(True)
-        nemo_layout.addWidget(self.nemo_status_label)
-
-        nemo_btn_row = QHBoxLayout()
-        nemo_btn_row.addStretch()
-
-        self.download_nemo_btn = QPushButton("Download")
-        self.download_nemo_btn.clicked.connect(self._download_selected_nemo_model)
-        nemo_btn_row.addWidget(self.download_nemo_btn)
-
-        self.delete_nemo_btn = QPushButton("Delete")
-        self.delete_nemo_btn.clicked.connect(self._delete_selected_nemo_model)
-        nemo_btn_row.addWidget(self.delete_nemo_btn)
-
-        self.set_active_nemo_btn = QPushButton("Set Active")
-        self.set_active_nemo_btn.clicked.connect(self._set_nemo_model_active)
-        nemo_btn_row.addWidget(self.set_active_nemo_btn)
-
-        nemo_layout.addLayout(nemo_btn_row)
-
-        nemo_hint = QLabel(
-            "Requires the optional onnx-asr package: pip install 'onnx-asr[cpu,hub]'"
-        )
-        nemo_hint.setWordWrap(True)
-        nemo_hint.setStyleSheet("font-size: 11px; opacity: 0.8;")
-        nemo_layout.addWidget(nemo_hint)
-
-        main_layout.addWidget(nemo_group)
-
-        self._nemo_download_worker: Optional[NemoDownloadWorker] = None
-        self._refresh_nemo_model_list()
-
-        # 4. Vulkan GPU Status Group
+        # 3. Vulkan GPU Status Group
         vulkan_group = QGroupBox("Vulkan GPU Status")
         vulkan_layout = QVBoxLayout(vulkan_group)
         vulkan_layout.setSpacing(6)
@@ -463,67 +415,103 @@ class SettingsDialog(QDialog):
         if chosen:
             self.folder_edit.setText(chosen)
 
+    def _add_model_header(self, text: str):
+        """Add a non-selectable section header row to the unified model list."""
+        header = QListWidgetItem(text)
+        header.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.model_list.addItem(header)
+
+    def _add_model_item(self, kind: str, info: Union[ModelInfo, NemoModelInfo]):
+        label = f"{'✓' if info.downloaded else '·'} {info.name}"
+        if info.downloaded:
+            label += f"  ({_format_size(info.size_bytes)})"
+        else:
+            label += "  — not downloaded"
+        if kind == "ggml" and info.name == "base.en":
+            label += "  (default)"
+        if info.name == self.config.model:
+            label += "  [active]"
+        item = QListWidgetItem(label)
+        item.setData(Qt.ItemDataRole.UserRole, (kind, info.name))
+        self.model_list.addItem(item)
+        if info.name == self.active_model_combo.currentText():
+            self.model_list.setCurrentItem(item)
+
     def _refresh_model_list(self):
-        """Repopulate the model list widget with current on-disk download status."""
+        """Repopulate the unified model list with current on-disk / cache download status."""
         self.model_list.blockSignals(True)
         self.model_list.clear()
+
+        self._add_model_header("Whisper (Vulkan / faster-whisper)")
         for info in list_models():
-            label = f"{'✓' if info.downloaded else '·'} {info.name}"
-            if info.downloaded:
-                label += f"  ({_format_size(info.size_bytes)})"
-            else:
-                label += "  — not downloaded"
-            if info.name == self.config.model:
-                label += "  [active]"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, info.name)
-            self.model_list.addItem(item)
-            if info.name == self.active_model_combo.currentText():
-                self.model_list.setCurrentItem(item)
+            self._add_model_item("ggml", info)
+
+        self._add_model_header("NVIDIA Parakeet && Canary (onnx-asr)")
+        for info in list_nemo_models():
+            self._add_model_item("nemo", info)
+
         self.model_list.blockSignals(False)
         self._on_model_row_changed(self.model_list.currentRow())
 
-    def _selected_model_info(self) -> Optional[ModelInfo]:
+    def _selected_model_entry(self) -> Optional[Tuple[str, Union[ModelInfo, NemoModelInfo]]]:
         item = self.model_list.currentItem()
         if not item:
             return None
-        name = item.data(Qt.ItemDataRole.UserRole)
-        for info in list_models():
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return None
+        kind, name = data
+        infos = list_models() if kind == "ggml" else list_nemo_models()
+        for info in infos:
             if info.name == name:
-                return info
+                return kind, info
         return None
 
     def _on_model_row_changed(self, _row: int):
-        info = self._selected_model_info()
-        busy = self._model_download_worker is not None
-        if info is None:
+        entry = self._selected_model_entry()
+        busy = self._download_worker is not None
+        if entry is None:
             self.model_status_label.setText("")
             self.download_model_btn.setEnabled(False)
             self.delete_model_btn.setEnabled(False)
+            self.set_active_model_btn.setEnabled(False)
             return
+        _kind, info = entry
         self.download_model_btn.setEnabled(not info.downloaded and not busy)
         self.delete_model_btn.setEnabled(info.downloaded and not busy)
+        self.set_active_model_btn.setEnabled(not busy)
         if info.downloaded:
             self.model_status_label.setText(f"{info.name}: downloaded ({_format_size(info.size_bytes)})")
         else:
             self.model_status_label.setText(f"{info.name}: not downloaded")
 
     def _download_selected_model(self):
-        info = self._selected_model_info()
-        if info is None or info.downloaded or self._model_download_worker is not None:
+        entry = self._selected_model_entry()
+        if entry is None or self._download_worker is not None:
+            return
+        kind, info = entry
+        if info.downloaded:
             return
 
         self.download_model_btn.setEnabled(False)
         self.delete_model_btn.setEnabled(False)
+        self.set_active_model_btn.setEnabled(False)
         self.model_download_progress.setVisible(True)
-        self.model_download_progress.setValue(0)
-        self.model_status_label.setText(f"Downloading {info.name}...")
 
-        worker = ModelDownloadWorker(info.name)
-        worker.progress.connect(self._on_download_progress)
+        if kind == "ggml":
+            self.model_download_progress.setRange(0, 100)
+            self.model_download_progress.setValue(0)
+            self.model_status_label.setText(f"Downloading {info.name}...")
+            worker: Union[ModelDownloadWorker, NemoDownloadWorker] = ModelDownloadWorker(info.name)
+            worker.progress.connect(self._on_download_progress)
+        else:
+            self.model_download_progress.setRange(0, 0)  # indeterminate: no byte-level progress hook
+            self.model_status_label.setText(f"Downloading {info.name}... (this can take a while for larger models)")
+            worker = NemoDownloadWorker(info.name)
+
         worker.finished.connect(self._on_download_finished)
         worker.error.connect(self._on_download_error)
-        self._model_download_worker = worker
+        self._download_worker = worker
         worker.start()
 
     def _on_download_progress(self, downloaded: int, total: int):
@@ -535,138 +523,51 @@ class SettingsDialog(QDialog):
             self.model_status_label.setText(f"Downloading... {_format_size(downloaded)}")
 
     def _on_download_finished(self, model_name: str):
-        self._model_download_worker = None
+        self._download_worker = None
+        self.model_download_progress.setRange(0, 100)
         self.model_download_progress.setVisible(False)
         self._refresh_model_list()
 
     def _on_download_error(self, message: str):
-        self._model_download_worker = None
+        self._download_worker = None
+        self.model_download_progress.setRange(0, 100)
         self.model_download_progress.setVisible(False)
         self.model_status_label.setText(f"Download failed: {message}")
         logger.warning("Model download failed: %s", message)
         self._on_model_row_changed(self.model_list.currentRow())
 
     def _delete_selected_model(self):
-        info = self._selected_model_info()
-        if info is None or not info.downloaded:
+        entry = self._selected_model_entry()
+        if entry is None:
+            return
+        kind, info = entry
+        if not info.downloaded:
             return
         try:
-            delete_model(info.name)
+            if kind == "ggml":
+                delete_model(info.name)
+            else:
+                delete_nemo_model(info.name)
         except Exception as e:
             logger.warning("Could not delete model %s: %s", info.name, e)
             self.model_status_label.setText(f"Delete failed: {e}")
             return
         self._refresh_model_list()
 
-    def _set_ggml_model_active(self):
-        info = self._selected_model_info()
-        if info is None:
+    def _set_model_active(self):
+        entry = self._selected_model_entry()
+        if entry is None:
             return
+        kind, info = entry
         if self.active_model_combo.findText(info.name) < 0:
             self.active_model_combo.addItem(info.name)
         self.active_model_combo.setCurrentText(info.name)
-        # A GGML model can't run on the nemo backend; fall back to auto-detection.
-        if self.backend_combo.currentIndex() == 3:
+        if kind == "nemo":
+            self.backend_combo.setCurrentIndex(3)  # nemo
+        elif self.backend_combo.currentIndex() == 3:
+            # A GGML model can't run on the nemo backend; fall back to auto-detection.
             self.backend_combo.setCurrentIndex(0)
         self._refresh_model_list()
-
-    def _refresh_nemo_model_list(self):
-        """Repopulate the Parakeet/Canary list widget with current cache download status."""
-        self.nemo_model_list.blockSignals(True)
-        self.nemo_model_list.clear()
-        for info in list_nemo_models():
-            label = f"{'✓' if info.downloaded else '·'} {info.name}"
-            if info.downloaded:
-                label += f"  ({_format_size(info.size_bytes)})"
-            else:
-                label += "  — not downloaded"
-            if info.name == self.config.model:
-                label += "  [active]"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, info.name)
-            self.nemo_model_list.addItem(item)
-            if info.name == self.active_model_combo.currentText():
-                self.nemo_model_list.setCurrentItem(item)
-        self.nemo_model_list.blockSignals(False)
-        self._on_nemo_row_changed(self.nemo_model_list.currentRow())
-
-    def _selected_nemo_model_info(self) -> Optional[NemoModelInfo]:
-        item = self.nemo_model_list.currentItem()
-        if not item:
-            return None
-        name = item.data(Qt.ItemDataRole.UserRole)
-        for info in list_nemo_models():
-            if info.name == name:
-                return info
-        return None
-
-    def _on_nemo_row_changed(self, _row: int):
-        info = self._selected_nemo_model_info()
-        busy = self._nemo_download_worker is not None
-        if info is None:
-            self.nemo_status_label.setText("")
-            self.download_nemo_btn.setEnabled(False)
-            self.delete_nemo_btn.setEnabled(False)
-            return
-        self.download_nemo_btn.setEnabled(not info.downloaded and not busy)
-        self.delete_nemo_btn.setEnabled(info.downloaded and not busy)
-        if info.downloaded:
-            self.nemo_status_label.setText(f"{info.name}: downloaded ({_format_size(info.size_bytes)})")
-        else:
-            self.nemo_status_label.setText(f"{info.name}: not downloaded")
-
-    def _download_selected_nemo_model(self):
-        info = self._selected_nemo_model_info()
-        if info is None or info.downloaded or self._nemo_download_worker is not None:
-            return
-
-        self.download_nemo_btn.setEnabled(False)
-        self.delete_nemo_btn.setEnabled(False)
-        self.nemo_download_progress.setVisible(True)
-        self.nemo_download_progress.setRange(0, 0)  # indeterminate: no byte-level progress hook
-        self.nemo_status_label.setText(f"Downloading {info.name}... (this can take a while for larger models)")
-
-        worker = NemoDownloadWorker(info.name)
-        worker.finished.connect(self._on_nemo_download_finished)
-        worker.error.connect(self._on_nemo_download_error)
-        self._nemo_download_worker = worker
-        worker.start()
-
-    def _on_nemo_download_finished(self, model_name: str):
-        self._nemo_download_worker = None
-        self.nemo_download_progress.setRange(0, 100)
-        self.nemo_download_progress.setVisible(False)
-        self._refresh_nemo_model_list()
-
-    def _on_nemo_download_error(self, message: str):
-        self._nemo_download_worker = None
-        self.nemo_download_progress.setRange(0, 100)
-        self.nemo_download_progress.setVisible(False)
-        self.nemo_status_label.setText(f"Download failed: {message}")
-        logger.warning("NVIDIA NeMo model download failed: %s", message)
-        self._on_nemo_row_changed(self.nemo_model_list.currentRow())
-
-    def _delete_selected_nemo_model(self):
-        info = self._selected_nemo_model_info()
-        if info is None or not info.downloaded:
-            return
-        try:
-            delete_nemo_model(info.name)
-        except Exception as e:
-            logger.warning("Could not delete NeMo model %s: %s", info.name, e)
-            self.nemo_status_label.setText(f"Delete failed: {e}")
-            return
-        self._refresh_nemo_model_list()
-
-    def _set_nemo_model_active(self):
-        info = self._selected_nemo_model_info()
-        if info is None:
-            return
-        if self.active_model_combo.findText(info.name) < 0:
-            self.active_model_combo.addItem(info.name)
-        self.active_model_combo.setCurrentText(info.name)
-        self.backend_combo.setCurrentIndex(3)  # nemo
-        self._refresh_nemo_model_list()
 
     def _check_vulkan_status(self):
         if self._vulkan_probe_worker is not None:
@@ -700,7 +601,7 @@ class SettingsDialog(QDialog):
 
     def _cleanup_workers(self):
         """Disconnect and stop any in-flight background workers before the dialog closes."""
-        for attr in ("_model_download_worker", "_nemo_download_worker", "_vulkan_probe_worker"):
+        for attr in ("_download_worker", "_vulkan_probe_worker"):
             worker = getattr(self, attr, None)
             if worker is not None:
                 try:
