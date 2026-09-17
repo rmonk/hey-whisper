@@ -27,6 +27,26 @@ build-options:
   env:
     PYTHONPATH: /app/lib/python3.11/site-packages
 
+# Stripped from /app once every module has built, since none of it is needed at
+# runtime: glslc and vulkan-shaders-gen are Vulkan-shader build tools consumed
+# only while compiling whisper.cpp; whisper-bench/whisper-server are unused
+# whisper.cpp example binaries (only whisper-cli is actually invoked); the rest
+# is C headers, static libs, CMake/pkg-config metadata, and docs left behind by
+# portaudio's and whisper.cpp's "install" steps for other software to build
+# against them, which nothing in this app does at runtime.
+cleanup:
+  - /bin/glslc
+  - /bin/vulkan-shaders-gen
+  - /bin/whisper-bench
+  - /bin/whisper-server
+  - /include
+  - /lib/*.a
+  - /lib/*.la
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/doc
+  - /share/man
+
 modules:
   - name: portaudio
     buildsystem: cmake-ninja
