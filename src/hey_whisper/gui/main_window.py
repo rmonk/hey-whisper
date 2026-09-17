@@ -285,11 +285,28 @@ class MainWindow(QMainWindow):
 
     def _on_settings_applied(self, new_config: AppConfig):
         """Handle settings changes saved from SettingsDialog."""
+        transcriber_changed = (
+            new_config.model != self.config.model
+            or new_config.backend != self.config.backend
+            or new_config.device != self.config.device
+            or new_config.compute_type != self.config.compute_type
+            or new_config.vulkan_device != self.config.vulkan_device
+        )
+
         self.config = new_config
         self._current_mode = self.config.mode
         self.recorder.silence_timeout = self.config.silence_timeout
         self.recorder.silence_threshold = self.config.silence_threshold
         self._theme_mode = self.config.theme
+
+        if transcriber_changed:
+            self.transcriber = Transcriber(
+                model_name=self.config.model,
+                backend=self.config.backend,
+                device=self.config.device,
+                compute_type=self.config.compute_type,
+                vulkan_device=self.config.vulkan_device,
+            )
 
         # Re-apply theme if changed
         _, colors = get_theme_colors(self._theme_mode)
@@ -299,7 +316,10 @@ class MainWindow(QMainWindow):
         self.month_tree.refresh(self.config.notes_dir)
         self._load_initial_notes()
         self._update_record_button_text()
-        self.status_bar.showMessage(f"Settings applied • Mode: {self._current_mode.capitalize()} • Notes: {self.config.notes_dir}")
+        backend_info = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+        self.status_bar.showMessage(
+            f"Settings applied • Model: {self.config.model} • Backend: {backend_info} • Notes: {self.config.notes_dir}"
+        )
 
     def changeEvent(self, event):
         """Detect OS system theme change when in auto mode."""

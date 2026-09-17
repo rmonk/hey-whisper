@@ -6,7 +6,7 @@ from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -21,6 +21,9 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QDialogButtonBox,
     QWidget,
+    QListWidget,
+    QListWidgetItem,
+    QProgressBar,
 )
 
 from hey_whisper.config import AppConfig, save_config
@@ -32,6 +35,59 @@ from hey_whisper.gui.icons import (
     create_check_icon,
     create_keyboard_icon,
 )
+from hey_whisper.transcriber import (
+    KNOWN_GGML_MODELS,
+    ModelInfo,
+    VulkanStatus,
+    delete_model,
+    get_ggml_model_path,
+    get_vulkan_status,
+    list_models,
+)
+
+
+def _format_size(size_bytes: Optional[int]) -> str:
+    if not size_bytes:
+        return ""
+    mb = size_bytes / (1024 * 1024)
+    if mb >= 1024:
+        return f"{mb / 1024:.2f} GB"
+    return f"{mb:.0f} MB"
+
+
+class ModelDownloadWorker(QThread):
+    """Background worker that downloads a GGML model without blocking the UI."""
+
+    progress = pyqtSignal(int, int)
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, model_name: str):
+        super().__init__()
+        self.model_name = model_name
+
+    def run(self):
+        try:
+            get_ggml_model_path(
+                self.model_name,
+                progress_callback=lambda done, total: self.progress.emit(done, total),
+            )
+            self.finished.emit(self.model_name)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class VulkanProbeWorker(QThread):
+    """Background worker that checks Vulkan availability without blocking the UI."""
+
+    finished = pyqtSignal(object)
+
+    def run(self):
+        try:
+            status = get_vulkan_status(probe=True)
+        except Exception as e:
+            status = VulkanStatus(whisper_cli_found=False, detail=f"Vulkan check failed: {e}")
+        self.finished.emit(status)
 
 
 class SettingsDialog(QDialog):
@@ -192,7 +248,75 @@ class SettingsDialog(QDialog):
         self.backend_combo.setCurrentIndex(backend_map.get(self.config.backend, 0))
         app_form.addRow("Whisper Backend:", self.backend_combo)
 
+        self.active_model_combo = QComboBox()
+        self.active_model_combo.addItems(KNOWN_GGML_MODELS)
+        if self.config.model in KNOWN_GGML_MODELS:
+            self.active_model_combo.setCurrentText(self.config.model)
+        else:
+            self.active_model_combo.addItem(self.config.model)
+            self.active_model_combo.setCurrentText(self.config.model)
+        app_form.addRow("Active Model:", self.active_model_combo)
+
         main_layout.addWidget(app_group)
+
+        # 5b. Whisper Model Management Group
+        models_group = QGroupBox("Whisper Models (Loaded / Available)")
+        models_layout = QVBoxLayout(models_group)
+        models_layout.setSpacing(8)
+
+        self.model_list = QListWidget()
+        self.model_list.setFixedHeight(140)
+        self.model_list.currentRowChanged.connect(self._on_model_row_changed)
+        models_layout.addWidget(self.model_list)
+
+        self.model_download_progress = QProgressBar()
+        self.model_download_progress.setRange(0, 100)
+        self.model_download_progress.setVisible(False)
+        models_layout.addWidget(self.model_download_progress)
+
+        model_btn_row = QHBoxLayout()
+        self.model_status_label = QLabel("")
+        self.model_status_label.setWordWrap(True)
+        model_btn_row.addWidget(self.model_status_label, 1)
+
+        self.download_model_btn = QPushButton("Download")
+        self.download_model_btn.clicked.connect(self._download_selected_model)
+        model_btn_row.addWidget(self.download_model_btn)
+
+        self.delete_model_btn = QPushButton("Delete")
+        self.delete_model_btn.clicked.connect(self._delete_selected_model)
+        model_btn_row.addWidget(self.delete_model_btn)
+
+        models_layout.addLayout(model_btn_row)
+        main_layout.addWidget(models_group)
+
+        self._model_download_worker: Optional[ModelDownloadWorker] = None
+        self._refresh_model_list()
+
+        # 5c. Vulkan GPU Status Group
+        vulkan_group = QGroupBox("Vulkan GPU Status")
+        vulkan_layout = QVBoxLayout(vulkan_group)
+        vulkan_layout.setSpacing(6)
+
+        self.vulkan_status_label = QLabel("Checking Vulkan status...")
+        self.vulkan_status_label.setWordWrap(True)
+        vulkan_layout.addWidget(self.vulkan_status_label)
+
+        self.vulkan_device_label = QLabel("")
+        self.vulkan_device_label.setWordWrap(True)
+        vulkan_layout.addWidget(self.vulkan_device_label)
+
+        vulkan_btn_row = QHBoxLayout()
+        vulkan_btn_row.addStretch()
+        self.recheck_vulkan_btn = QPushButton("Re-check Vulkan")
+        self.recheck_vulkan_btn.clicked.connect(self._check_vulkan_status)
+        vulkan_btn_row.addWidget(self.recheck_vulkan_btn)
+        vulkan_layout.addLayout(vulkan_btn_row)
+
+        main_layout.addWidget(vulkan_group)
+
+        self._vulkan_probe_worker: Optional[VulkanProbeWorker] = None
+        self._check_vulkan_status()
 
         # 6. Dialog Buttons
         btn_box = QDialogButtonBox()
@@ -213,6 +337,149 @@ class SettingsDialog(QDialog):
         chosen = QFileDialog.getExistingDirectory(self, "Select Notes Storage Directory", self.folder_edit.text())
         if chosen:
             self.folder_edit.setText(chosen)
+
+    def _refresh_model_list(self):
+        """Repopulate the model list widget with current on-disk download status."""
+        self.model_list.blockSignals(True)
+        self.model_list.clear()
+        for info in list_models():
+            label = f"{'✓' if info.downloaded else '·'} {info.name}"
+            if info.downloaded:
+                label += f"  ({_format_size(info.size_bytes)})"
+            else:
+                label += "  — not downloaded"
+            if info.name == self.config.model:
+                label += "  [active]"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, info.name)
+            self.model_list.addItem(item)
+            if info.name == self.active_model_combo.currentText():
+                self.model_list.setCurrentItem(item)
+        self.model_list.blockSignals(False)
+        self._on_model_row_changed(self.model_list.currentRow())
+
+    def _selected_model_info(self) -> Optional[ModelInfo]:
+        item = self.model_list.currentItem()
+        if not item:
+            return None
+        name = item.data(Qt.ItemDataRole.UserRole)
+        for info in list_models():
+            if info.name == name:
+                return info
+        return None
+
+    def _on_model_row_changed(self, _row: int):
+        info = self._selected_model_info()
+        busy = self._model_download_worker is not None
+        if info is None:
+            self.model_status_label.setText("")
+            self.download_model_btn.setEnabled(False)
+            self.delete_model_btn.setEnabled(False)
+            return
+        self.download_model_btn.setEnabled(not info.downloaded and not busy)
+        self.delete_model_btn.setEnabled(info.downloaded and not busy)
+        if info.downloaded:
+            self.model_status_label.setText(f"{info.name}: downloaded ({_format_size(info.size_bytes)})")
+        else:
+            self.model_status_label.setText(f"{info.name}: not downloaded")
+
+    def _download_selected_model(self):
+        info = self._selected_model_info()
+        if info is None or info.downloaded or self._model_download_worker is not None:
+            return
+
+        self.download_model_btn.setEnabled(False)
+        self.delete_model_btn.setEnabled(False)
+        self.model_download_progress.setVisible(True)
+        self.model_download_progress.setValue(0)
+        self.model_status_label.setText(f"Downloading {info.name}...")
+
+        worker = ModelDownloadWorker(info.name)
+        worker.progress.connect(self._on_download_progress)
+        worker.finished.connect(self._on_download_finished)
+        worker.error.connect(self._on_download_error)
+        self._model_download_worker = worker
+        worker.start()
+
+    def _on_download_progress(self, downloaded: int, total: int):
+        if total > 0:
+            pct = int(downloaded * 100 / total)
+            self.model_download_progress.setValue(pct)
+            self.model_status_label.setText(f"Downloading... {_format_size(downloaded)} / {_format_size(total)}")
+        else:
+            self.model_status_label.setText(f"Downloading... {_format_size(downloaded)}")
+
+    def _on_download_finished(self, model_name: str):
+        self._model_download_worker = None
+        self.model_download_progress.setVisible(False)
+        self._refresh_model_list()
+
+    def _on_download_error(self, message: str):
+        self._model_download_worker = None
+        self.model_download_progress.setVisible(False)
+        self.model_status_label.setText(f"Download failed: {message}")
+        logger.warning("Model download failed: %s", message)
+        self._on_model_row_changed(self.model_list.currentRow())
+
+    def _delete_selected_model(self):
+        info = self._selected_model_info()
+        if info is None or not info.downloaded:
+            return
+        try:
+            delete_model(info.name)
+        except Exception as e:
+            logger.warning("Could not delete model %s: %s", info.name, e)
+            self.model_status_label.setText(f"Delete failed: {e}")
+            return
+        self._refresh_model_list()
+
+    def _check_vulkan_status(self):
+        if self._vulkan_probe_worker is not None:
+            return
+        self.recheck_vulkan_btn.setEnabled(False)
+        self.vulkan_status_label.setText("Checking Vulkan status...")
+        self.vulkan_device_label.setText("")
+
+        worker = VulkanProbeWorker()
+        worker.finished.connect(self._on_vulkan_status_ready)
+        self._vulkan_probe_worker = worker
+        worker.start()
+
+    def _on_vulkan_status_ready(self, status: VulkanStatus):
+        self._vulkan_probe_worker = None
+        self.recheck_vulkan_btn.setEnabled(True)
+
+        if not status.whisper_cli_found:
+            self.vulkan_status_label.setText("Vulkan: whisper-cli not found — Vulkan backend unavailable")
+        elif status.working:
+            self.vulkan_status_label.setText("Vulkan: enabled and working")
+        else:
+            self.vulkan_status_label.setText(f"Vulkan: not confirmed — {status.detail}")
+
+        device_lines = []
+        if status.device_name:
+            device_lines.append(f"In use: {status.device_name}")
+        if status.system_devices:
+            device_lines.append("System devices: " + ", ".join(status.system_devices))
+        self.vulkan_device_label.setText("\n".join(device_lines))
+
+    def _cleanup_workers(self):
+        """Disconnect and stop any in-flight background workers before the dialog closes."""
+        for attr in ("_model_download_worker", "_vulkan_probe_worker"):
+            worker = getattr(self, attr, None)
+            if worker is not None:
+                try:
+                    worker.finished.disconnect()
+                except TypeError:
+                    pass
+                if worker.isRunning():
+                    worker.terminate()
+                    worker.wait(500)
+                setattr(self, attr, None)
+
+    def done(self, result: int):
+        self._cleanup_workers()
+        super().done(result)
 
     def _update_prefix_preview(self):
         tpl = self.prefix_edit.text().strip() or DEFAULT_NOTE_PREFIX
@@ -239,6 +506,8 @@ class SettingsDialog(QDialog):
 
         backends = ["auto", "vulkan", "faster-whisper"]
         self.config.backend = backends[self.backend_combo.currentIndex()]
+
+        self.config.model = self.active_model_combo.currentText().strip() or self.config.model
 
         # Persist to disk
         try:

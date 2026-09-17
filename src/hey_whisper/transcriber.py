@@ -7,12 +7,52 @@ import sys
 import tempfile
 import urllib.request
 import wave
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 import numpy as np
 
 
 CACHE_DIR = Path.home() / ".cache" / "hey-whisper" / "models"
+
+# Known GGML models published under ggerganov/whisper.cpp on Hugging Face,
+# usable by the Vulkan whisper.cpp backend.
+KNOWN_GGML_MODELS = [
+    "tiny",
+    "tiny.en",
+    "base",
+    "base.en",
+    "small",
+    "small.en",
+    "medium",
+    "medium.en",
+    "large-v1",
+    "large-v2",
+    "large-v3",
+    "large-v3-turbo",
+]
+
+
+@dataclass
+class ModelInfo:
+    """Local availability info for a known whisper GGML model."""
+
+    name: str
+    downloaded: bool
+    size_bytes: Optional[int] = None
+    path: Optional[Path] = None
+
+
+@dataclass
+class VulkanStatus:
+    """Snapshot of Vulkan availability and whisper.cpp backend health."""
+
+    whisper_cli_found: bool
+    whisper_cli_path: Optional[str] = None
+    system_devices: list = field(default_factory=list)
+    working: bool = False
+    device_name: Optional[str] = None
+    detail: str = "Not tested"
 
 
 def find_whisper_cli() -> Optional[str]:
@@ -39,14 +79,28 @@ def find_whisper_cli() -> Optional[str]:
     return None
 
 
-def get_ggml_model_path(model_name: str) -> Path:
-    """Ensure GGML model file is available locally, downloading if necessary."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    clean_name = model_name.replace(".en", ".en")
+def _ggml_filename(model_name: str) -> str:
+    clean_name = model_name.strip()
     if not clean_name.startswith("ggml-"):
-        filename = f"ggml-{clean_name}.bin"
-    else:
-        filename = f"{clean_name}.bin"
+        return f"ggml-{clean_name}.bin"
+    return f"{clean_name}.bin"
+
+
+def _ggml_model_file(model_name: str) -> Path:
+    return CACHE_DIR / _ggml_filename(model_name)
+
+
+def get_ggml_model_path(
+    model_name: str,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> Path:
+    """Ensure GGML model file is available locally, downloading if necessary.
+
+    `progress_callback`, if given, is invoked with (bytes_downloaded, total_bytes)
+    as the download proceeds; total_bytes is 0 if the server didn't report a size.
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    filename = _ggml_filename(model_name)
 
     target_file = CACHE_DIR / filename
     if target_file.is_file() and target_file.stat().st_size > 1_000_000:
@@ -55,8 +109,18 @@ def get_ggml_model_path(model_name: str) -> Path:
     url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}"
     print(f"Downloading Vulkan-compatible GGML model from {url}...")
     temp_target = target_file.with_suffix(".tmp")
+
+    def _reporthook(block_num: int, block_size: int, total_size: int) -> None:
+        if progress_callback is not None:
+            downloaded = block_num * block_size
+            if total_size > 0:
+                downloaded = min(downloaded, total_size)
+            progress_callback(downloaded, max(total_size, 0))
+
     try:
-        urllib.request.urlretrieve(url, temp_target)
+        urllib.request.urlretrieve(
+            url, temp_target, reporthook=_reporthook if progress_callback else None
+        )
         temp_target.rename(target_file)
         print(f"Model saved to {target_file}")
     except Exception as e:
@@ -65,6 +129,135 @@ def get_ggml_model_path(model_name: str) -> Path:
         raise RuntimeError(f"Failed to download GGML model {filename}: {e}")
 
     return target_file
+
+
+def list_models() -> list:
+    """List all known GGML models with their local download status."""
+    infos = []
+    for name in KNOWN_GGML_MODELS:
+        path = _ggml_model_file(name)
+        downloaded = path.is_file() and path.stat().st_size > 1_000_000
+        infos.append(
+            ModelInfo(
+                name=name,
+                downloaded=downloaded,
+                size_bytes=path.stat().st_size if downloaded else None,
+                path=path if downloaded else None,
+            )
+        )
+    return infos
+
+
+def delete_model(model_name: str) -> bool:
+    """Remove a downloaded GGML model file from the local cache. Returns True if removed."""
+    path = _ggml_model_file(model_name)
+    if path.is_file():
+        path.unlink()
+        return True
+    return False
+
+
+def get_system_vulkan_devices() -> list:
+    """Query system Vulkan devices via `vulkaninfo --summary`, independent of whisper.cpp."""
+    vulkaninfo = shutil.which("vulkaninfo")
+    if not vulkaninfo:
+        return []
+    try:
+        result = subprocess.run(
+            [vulkaninfo, "--summary"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        devices = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("deviceName"):
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    devices.append(parts[1].strip())
+        return devices
+    except Exception:
+        return []
+
+
+def probe_vulkan_backend(model_path: Optional[Path] = None, timeout: float = 30.0) -> VulkanStatus:
+    """Run whisper-cli on a short silent clip and inspect stderr to confirm Vulkan is active.
+
+    Requires a locally downloaded GGML model to actually exercise the backend; if none is
+    available, reports whisper-cli/Vulkan discovery info without running an inference.
+    """
+    cli = find_whisper_cli()
+    system_devices = get_system_vulkan_devices()
+    status = VulkanStatus(
+        whisper_cli_found=cli is not None,
+        whisper_cli_path=cli,
+        system_devices=system_devices,
+    )
+
+    if not cli:
+        status.detail = "whisper-cli not found; Vulkan backend unavailable"
+        return status
+
+    if model_path is None:
+        for info in list_models():
+            if info.downloaded:
+                model_path = info.path
+                break
+
+    if model_path is None:
+        status.detail = "whisper-cli found, but no local model is downloaded to test with"
+        return status
+
+    silent_audio = np.zeros(8000, dtype=np.float32)  # 0.5s of silence
+    wav_file = save_audio_to_wav(silent_audio)
+    try:
+        cmd = [cli, "-m", str(model_path), "-f", str(wav_file), "-np", "-nt"]
+        proc = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout
+        )
+        stderr = proc.stderr or ""
+        if "ggml_vulkan" in stderr.lower():
+            status.working = True
+            device = None
+            for line in stderr.splitlines():
+                s = line.strip()
+                if s.lower().startswith("ggml_vulkan:") and " = " in s:
+                    after = s.split(":", 1)[1].strip()
+                    namepart = after.split("=", 1)[1].strip() if "=" in after else None
+                    if namepart:
+                        device = namepart.split("|")[0].strip()
+                        break
+            status.device_name = device
+            status.detail = f"Vulkan backend active on {device}" if device else "Vulkan backend active"
+        else:
+            status.detail = "whisper-cli ran but did not report using Vulkan (CPU fallback or non-Vulkan build)"
+    except subprocess.TimeoutExpired:
+        status.detail = f"Vulkan probe timed out after {timeout:.0f}s"
+    except Exception as e:
+        status.detail = f"Vulkan probe failed: {e}"
+    finally:
+        if wav_file.is_file():
+            wav_file.unlink()
+
+    return status
+
+
+def get_vulkan_status(probe: bool = True, model_path: Optional[Path] = None) -> VulkanStatus:
+    """Return current Vulkan availability/health. Set probe=False to skip running whisper-cli."""
+    if probe:
+        return probe_vulkan_backend(model_path=model_path)
+
+    cli = find_whisper_cli()
+    return VulkanStatus(
+        whisper_cli_found=cli is not None,
+        whisper_cli_path=cli,
+        system_devices=get_system_vulkan_devices(),
+        working=False,
+        device_name=None,
+        detail="Not tested",
+    )
 
 
 def save_audio_to_wav(audio_data: np.ndarray, sample_rate: int = 16000) -> Path:
