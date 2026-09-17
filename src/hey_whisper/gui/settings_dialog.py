@@ -1,6 +1,7 @@
 """Configuration dialog for Hey Whisper settings."""
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Callable, Tuple, Union
 
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QScrollArea,
     QMessageBox,
+    QApplication,
 )
 
 from hey_whisper.config import AppConfig, save_config
@@ -118,6 +120,13 @@ class VulkanProbeWorker(QThread):
         except Exception as e:
             status = VulkanStatus(whisper_cli_found=False, detail=f"Vulkan check failed: {e}")
         self.finished.emit(status)
+
+
+# Keeps a live Python reference to any background worker QThread whose owning
+# SettingsDialog closed before the thread finished, so it can't be garbage
+# collected mid-run (see SettingsDialog._cleanup_workers). Entries remove
+# themselves once the worker's finished/error signal fires.
+_ORPHANED_WORKERS: set = set()
 
 
 class SettingsDialog(QDialog):
@@ -601,18 +610,42 @@ class SettingsDialog(QDialog):
         self.vulkan_device_label.setText("\n".join(device_lines))
 
     def _cleanup_workers(self):
-        """Disconnect and stop any in-flight background workers before the dialog closes."""
+        """Detach any in-flight background workers before the dialog closes.
+
+        Deliberately never QThread.terminate() here: it can kill a thread mid
+        Python bytecode (e.g. mid signal-emit), corrupting interpreter state and
+        crashing the process. Disconnecting every signal first makes a
+        still-running worker's eventual finish/error emission a harmless no-op.
+        A short bounded wait lets fast probes exit cleanly without blocking the
+        UI on a slow download; if a worker is still running after that, its
+        Python wrapper is kept alive in _ORPHANED_WORKERS until it finishes on
+        its own, since letting Python garbage-collect a QThread object while its
+        OS thread is still executing (e.g. about to emit a signal) can crash
+        the process too.
+        """
         for attr in ("_download_worker", "_vulkan_probe_worker"):
             worker = getattr(self, attr, None)
-            if worker is not None:
-                try:
-                    worker.finished.disconnect()
-                except TypeError:
-                    pass
-                if worker.isRunning():
-                    worker.terminate()
-                    worker.wait(500)
-                setattr(self, attr, None)
+            if worker is None:
+                continue
+            signals = [getattr(worker, name, None) for name in ("finished", "error", "progress")]
+            for sig in signals:
+                if sig is not None:
+                    try:
+                        sig.disconnect()
+                    except TypeError:
+                        pass
+            if worker.isRunning():
+                worker.wait(1000)
+            if worker.isRunning():
+                _ORPHANED_WORKERS.add(worker)
+
+                def _release(w=worker):
+                    _ORPHANED_WORKERS.discard(w)
+
+                for sig in signals:
+                    if sig is not None:
+                        sig.connect(_release)
+            setattr(self, attr, None)
 
     def done(self, result: int):
         self._cleanup_workers()
@@ -651,12 +684,19 @@ class SettingsDialog(QDialog):
             save_config(self.config)
         except Exception as e:
             logger.warning("Could not persist configuration to disk: %s", e)
-            QMessageBox.warning(
-                self,
-                "Settings Not Saved",
-                "Your settings will apply for this session, but could not be written to disk "
-                f"and will revert the next time Hey Whisper starts.\n\nError: {e}",
+            app = QApplication.instance()
+            headless = (
+                (app is not None and app.platformName() == "offscreen")
+                or os.environ.get("CI")
+                or os.environ.get("QT_QPA_PLATFORM") == "offscreen"
             )
+            if not headless:
+                QMessageBox.warning(
+                    self,
+                    "Settings Not Saved",
+                    "Your settings will apply for this session, but could not be written to disk "
+                    f"and will revert the next time Hey Whisper starts.\n\nError: {e}",
+                )
 
         self.settings_applied.emit(self.config)
         self.accept()

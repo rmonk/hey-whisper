@@ -70,6 +70,11 @@ NEMO_ONNX_MODELS = [
     "istupakov/canary-1b-flash-onnx",
 ]
 
+# faster-whisper model used when the nemo backend fails and transcribe() falls
+# back: self.model_name at that point is a NeMo preset name, which WhisperModel
+# cannot resolve, so a known-good faster-whisper model is needed instead.
+NEMO_FALLBACK_WHISPER_MODEL = "base.en"
+
 
 def _nemo_repo_id(model_name: str) -> str:
     """Map an onnx-asr preset name to its backing Hugging Face repo id."""
@@ -204,29 +209,31 @@ def delete_model(model_name: str) -> bool:
     return False
 
 
-def _scan_nemo_repo_cache(repo_id: str):
-    """Return (downloaded, size_bytes) for a Hugging Face repo in the local hub cache."""
+def _scan_nemo_cache_sizes() -> dict:
+    """Return {repo_id: size_on_disk} for model repos in the local Hugging Face hub cache.
+
+    Scans the cache once regardless of how many presets are being checked, since
+    scan_cache_dir() walks the whole cache directory every time it's called.
+    """
     try:
         from huggingface_hub import scan_cache_dir
     except ImportError:
-        return False, None
+        return {}
     try:
         cache_info = scan_cache_dir(cache_dir=str(HF_CACHE_DIR))
     except Exception:
-        return False, None
-    for repo in cache_info.repos:
-        if repo.repo_id == repo_id and repo.repo_type == "model":
-            return True, repo.size_on_disk
-    return False, None
+        return {}
+    return {repo.repo_id: repo.size_on_disk for repo in cache_info.repos if repo.repo_type == "model"}
 
 
 def list_nemo_models() -> list:
     """List known Parakeet/Canary onnx-asr presets with their local download status."""
+    sizes = _scan_nemo_cache_sizes()
     infos = []
     for name in NEMO_ONNX_MODELS:
         repo_id = _nemo_repo_id(name)
-        downloaded, size = _scan_nemo_repo_cache(repo_id)
-        infos.append(NemoModelInfo(name=name, repo_id=repo_id, downloaded=downloaded, size_bytes=size))
+        size = sizes.get(repo_id)
+        infos.append(NemoModelInfo(name=name, repo_id=repo_id, downloaded=repo_id in sizes, size_bytes=size))
     return infos
 
 
@@ -327,7 +334,7 @@ def probe_vulkan_backend(model_path: Optional[Path] = None, timeout: float = 30.
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout
         )
         stderr = proc.stderr or ""
-        if "ggml_vulkan" in stderr.lower():
+        if proc.returncode == 0 and "ggml_vulkan" in stderr.lower():
             status.working = True
             device = None
             for line in stderr.splitlines():
@@ -340,6 +347,8 @@ def probe_vulkan_backend(model_path: Optional[Path] = None, timeout: float = 30.
                         break
             status.device_name = device
             status.detail = f"Vulkan backend active on {device}" if device else "Vulkan backend active"
+        elif proc.returncode != 0:
+            status.detail = f"whisper-cli exited with status {proc.returncode}"
         else:
             status.detail = "whisper-cli ran but did not report using Vulkan (CPU fallback or non-Vulkan build)"
     except subprocess.TimeoutExpired:
@@ -452,8 +461,13 @@ class Transcriber:
             if wav_file.is_file():
                 wav_file.unlink()
 
-    def _transcribe_faster_whisper(self, audio_data: np.ndarray) -> str:
-        """Transcribe using faster-whisper (CTranslate2)."""
+    def _transcribe_faster_whisper(self, audio_data: np.ndarray, model_override: Optional[str] = None) -> str:
+        """Transcribe using faster-whisper (CTranslate2).
+
+        `model_override`, if given, is used instead of `self.model_name` - needed when
+        falling back from the nemo backend, since self.model_name there is a NeMo preset
+        (e.g. "nemo-parakeet-tdt-0.6b-v3") that WhisperModel cannot resolve.
+        """
         if self._faster_whisper_model is None:
             from faster_whisper import WhisperModel
             import ctranslate2
@@ -467,7 +481,7 @@ class Transcriber:
                 comp_type = "int8"
 
             self._faster_whisper_model = WhisperModel(
-                self.model_name,
+                model_override or self.model_name,
                 device=dev,
                 compute_type=comp_type,
             )
@@ -513,6 +527,8 @@ class Transcriber:
                 return self._transcribe_nemo(audio_data)
             except Exception as e:
                 print(f"Warning: NVIDIA NeMo (onnx-asr) failed ({e}), falling back to faster-whisper...", file=sys.stderr)
-                return self._transcribe_faster_whisper(audio_data)
+                # self.model_name is a NeMo preset here (e.g. "nemo-parakeet-tdt-0.6b-v3"),
+                # which WhisperModel can't resolve - use a known-good faster-whisper model.
+                return self._transcribe_faster_whisper(audio_data, model_override=NEMO_FALLBACK_WHISPER_MODEL)
         else:
             return self._transcribe_faster_whisper(audio_data)

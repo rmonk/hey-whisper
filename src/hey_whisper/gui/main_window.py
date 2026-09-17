@@ -1,5 +1,6 @@
 """Main Window for Hey Whisper with month tree, editor, push-to-talk hotkey, theme, and unified settings dialog."""
 
+from dataclasses import replace
 from datetime import datetime
 import logging
 import os
@@ -282,7 +283,10 @@ class MainWindow(QMainWindow):
     def _open_settings_dialog(self):
         """Open unified configuration dialog."""
         dlg = SettingsDialog(
-            config=self.config,
+            # A copy, not self.config directly: SettingsDialog mutates its config
+            # in place, and _on_settings_applied needs to diff old vs. new values
+            # to know whether the live Transcriber must be recreated.
+            config=replace(self.config),
             current_colors=self._current_colors,
             parent=self,
             on_configure_global_hotkey=self.shortcuts_manager.configure_shortcuts,

@@ -160,6 +160,7 @@ def test_probe_vulkan_backend_working(tmp_path, monkeypatch):
     model_path.write_bytes(b"0" * 2_000_000)
 
     mock_result = MagicMock()
+    mock_result.returncode = 0
     mock_result.stderr = (
         "ggml_vulkan: Found 1 Vulkan devices:\n"
         "ggml_vulkan: 0 = AMD Radeon Graphics (RADV RENOIR) (AMD) | uma: 1 | fp16: 1\n"
@@ -169,6 +170,29 @@ def test_probe_vulkan_backend_working(tmp_path, monkeypatch):
 
     assert status.working is True
     assert status.device_name == "AMD Radeon Graphics (RADV RENOIR) (AMD)"
+
+
+def test_probe_vulkan_backend_nonzero_exit_not_working(tmp_path, monkeypatch):
+    """A Vulkan banner printed before a crash later in the run must not count as 'working'."""
+    monkeypatch.setattr("hey_whisper.transcriber.find_whisper_cli", lambda: "/usr/bin/whisper-cli")
+    monkeypatch.setattr("hey_whisper.transcriber.get_system_vulkan_devices", lambda: ["AMD Radeon Graphics"])
+
+    model_path = tmp_path / "ggml-tiny.bin"
+    model_path.write_bytes(b"0" * 2_000_000)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stderr = (
+        "ggml_vulkan: Found 1 Vulkan devices:\n"
+        "ggml_vulkan: 0 = AMD Radeon Graphics (RADV RENOIR) (AMD) | uma: 1 | fp16: 1\n"
+        "whisper_full: failed to decode\n"
+    )
+    with patch("subprocess.run", return_value=mock_result):
+        status = probe_vulkan_backend(model_path=model_path)
+
+    assert status.working is False
+    assert status.device_name is None
+    assert "exited with status 1" in status.detail
 
 
 def test_nemo_repo_id_mapping():
@@ -265,3 +289,32 @@ def test_transcriber_nemo_falls_back_to_faster_whisper_on_error():
     dummy_audio = np.zeros(16000, dtype=np.float32)
     result = transcriber.transcribe(dummy_audio)
     assert result == "fallback text"
+
+
+def test_nemo_fallback_does_not_pass_nemo_preset_to_faster_whisper():
+    """The nemo->faster-whisper fallback must use a real faster-whisper model id,
+    not the NeMo preset name (e.g. "nemo-parakeet-tdt-0.6b-v3"), which WhisperModel
+    cannot resolve."""
+    transcriber = Transcriber(model_name="nemo-parakeet-tdt-0.6b-v3", backend="nemo")
+
+    def raise_error(*args, **kwargs):
+        raise RuntimeError("onnx-asr not installed")
+
+    transcriber._transcribe_nemo = raise_error
+
+    mock_segment = MagicMock()
+    mock_segment.text = "fallback text"
+    mock_model_instance = MagicMock()
+    mock_model_instance.transcribe.return_value = ([mock_segment], None)
+    mock_whisper_model_cls = MagicMock(return_value=mock_model_instance)
+
+    fake_faster_whisper = MagicMock(WhisperModel=mock_whisper_model_cls)
+    fake_ctranslate2 = MagicMock(get_cuda_device_count=lambda: 0)
+
+    dummy_audio = np.zeros(16000, dtype=np.float32)
+    with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper, "ctranslate2": fake_ctranslate2}):
+        result = transcriber.transcribe(dummy_audio)
+
+    assert result == "fallback text"
+    called_model_name = mock_whisper_model_cls.call_args[0][0]
+    assert called_model_name == "base.en"

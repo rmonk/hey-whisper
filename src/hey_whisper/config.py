@@ -36,6 +36,12 @@ from typing import Optional
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "hey-whisper.conf"
 FALLBACK_CONFIG_PATH = Path.home() / ".config" / "spoken-notes.conf"
 
+# Default active model when backend=nemo is set with no explicit model: "base.en"
+# (the overall default) is a GGML-only name onnx_asr can't load, so pairing it
+# with backend=nemo would fail every transcription and silently fall back to
+# faster-whisper. Mirrors transcriber.NEMO_ONNX_MODELS[3].
+DEFAULT_NEMO_MODEL = "nemo-parakeet-tdt-0.6b-v3"
+
 
 @dataclass
 class AppConfig:
@@ -215,7 +221,13 @@ def load_config(
         else (file_silence_timeout if file_silence_timeout is not None else 1.5)
     )
 
-    model = _clean_str(cli_model) or file_model or "base.en"
+    explicit_model = _clean_str(cli_model) or file_model
+    if explicit_model:
+        model = explicit_model
+    elif backend_candidate == "nemo":
+        model = DEFAULT_NEMO_MODEL
+    else:
+        model = "base.en"
     hotkey = file_hotkey or "Space"
     silence_threshold = file_silence_threshold if file_silence_threshold is not None else 500.0
     note_prefix = _clean_str(cli_note_prefix) or file_note_prefix or "[%Y-%m-%d %H:%M %Z]"
