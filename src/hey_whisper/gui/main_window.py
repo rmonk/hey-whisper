@@ -76,6 +76,14 @@ class TranscribeWorker(QThread):
             self.error.emit(str(e))
 
 
+def _backend_label(transcriber: Transcriber) -> str:
+    if transcriber.is_vulkan:
+        return "Vulkan GPU"
+    if transcriber.is_nemo:
+        return "NVIDIA NeMo (Parakeet/Canary)"
+    return "faster-whisper"
+
+
 class MainWindow(QMainWindow):
     """Main application window for Hey Whisper."""
 
@@ -196,7 +204,7 @@ class MainWindow(QMainWindow):
         # 3. Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        backend_info = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+        backend_info = _backend_label(self.transcriber)
         self.status_bar.showMessage(f"Ready • Backend: {backend_info} • Notes: {self.config.notes_dir}")
 
     def apply_theme(self, colors: ThemeColors):
@@ -316,7 +324,7 @@ class MainWindow(QMainWindow):
         self.month_tree.refresh(self.config.notes_dir)
         self._load_initial_notes()
         self._update_record_button_text()
-        backend_info = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+        backend_info = _backend_label(self.transcriber)
         self.status_bar.showMessage(
             f"Settings applied • Model: {self.config.model} • Backend: {backend_info} • Notes: {self.config.notes_dir}"
         )
@@ -492,7 +500,7 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("Recording was too short to transcribe.")
                 return
 
-            backend_name = "Vulkan GPU" if self.transcriber.is_vulkan else "faster-whisper"
+            backend_name = _backend_label(self.transcriber)
             self.status_bar.showMessage(f"⏳ Transcribing audio with {backend_name}...")
             self.record_btn.setEnabled(False)
 

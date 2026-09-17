@@ -22,6 +22,7 @@ Whisper backends:
 - auto: Detect Vulkan GPU acceleration; fallback to faster-whisper/CPU
 - vulkan: whisper.cpp with Vulkan GGML backend
 - faster-whisper: CTranslate2 backend
+- nemo: NVIDIA Parakeet / Canary models via onnx-asr (never auto-selected)
 """
 
 import os
@@ -44,7 +45,7 @@ class AppConfig:
     silence_timeout: float = 1.5  # seconds
     silence_threshold: float = 500.0  # RMS audio energy threshold
     model: str = "base.en"
-    backend: str = "auto"  # "auto", "vulkan", "faster-whisper"
+    backend: str = "auto"  # "auto", "vulkan", "faster-whisper", "nemo"
     theme: str = "auto"  # "auto", "light", "dark"
     note_prefix: str = "[%Y-%m-%d %H:%M %Z]"  # Note timestamp / prefix format
     device: str = "auto"
@@ -200,7 +201,7 @@ def load_config(
 
     # Resolve backend: CLI > config file > default "auto"
     backend_candidate = (_clean_str(cli_backend) or file_backend or "auto").lower().strip()
-    if backend_candidate not in ("auto", "vulkan", "faster-whisper"):
+    if backend_candidate not in ("auto", "vulkan", "faster-whisper", "nemo"):
         backend_candidate = "auto"
 
     # Resolve theme: CLI > config file > default "auto"

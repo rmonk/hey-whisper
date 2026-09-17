@@ -1,6 +1,6 @@
 # Hey Whisper (🎙️)
 
-A desktop voice-notes tool that listens on your default microphone, transcribes speech with **Vulkan GPU acceleration** (via `whisper.cpp`) and [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper), and maintains weekly markdown logs organized by day.
+A desktop voice-notes tool that listens on your default microphone, transcribes speech with **Vulkan GPU acceleration** (via `whisper.cpp`), [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper), or **NVIDIA Parakeet/Canary** (via [`onnx-asr`](https://github.com/istupakov/onnx-asr)), and maintains weekly markdown logs organized by day.
 
 ---
 
@@ -11,6 +11,10 @@ A desktop voice-notes tool that listens on your default microphone, transcribes 
   - Full **Vulkan GPU acceleration** (works across NVIDIA, AMD, and Intel GPUs) via integrated `whisper.cpp` / `ggml-vulkan`.
   - Fallback to `faster-whisper` (CTranslate2) with quantized `int8` CPU / CUDA execution.
   - Automatically selects the fastest available backend (`auto`, `vulkan`, or `faster-whisper`).
+- **NVIDIA Parakeet & Canary Support** (optional, `nemo` backend):
+  - Runs NVIDIA's Parakeet (CTC/RNNT/TDT) and Canary (multilingual AED) models locally via the lightweight [`onnx-asr`](https://github.com/istupakov/onnx-asr) package — no PyTorch or the full NeMo toolkit required.
+  - Never auto-selected; opt in explicitly by picking a Parakeet/Canary model and the `nemo` backend in Settings.
+  - Install with: `pip install 'onnx-asr[cpu,hub]'` (or the `nemo` extra: `pip install '.[nemo]'`).
 - **Three Trigger Modes**:
   - `hold` (*Default*): Push-to-talk. Press and hold a hotkey (default: <kbd>Space</kbd>) or mouse button to record; release to transcribe immediately.
   - `toggle`: Click or press hotkey to start recording, click or press again to finish.
@@ -67,8 +71,13 @@ notes_dir = ~/Documents/Notes
 note_prefix = [%Y-%m-%d %H:%M %Z]
 # Theme: auto (follow OS light/dark mode), light, or dark
 theme = auto
-# Backend: auto (detects Vulkan GPU acceleration), vulkan, or faster-whisper
+# Backend: auto (detects Vulkan GPU acceleration), vulkan, faster-whisper, or nemo
+# (nemo runs NVIDIA Parakeet/Canary via onnx-asr; requires `pip install 'onnx-asr[cpu,hub]'`
+# and is never chosen by "auto" — pick it explicitly along with a Parakeet/Canary model name)
 backend = auto
+# For backend=nemo, use a Parakeet/Canary preset instead, e.g.:
+#   model = nemo-parakeet-tdt-0.6b-v3
+#   model = nemo-canary-1b-v2
 model = base.en
 device = auto
 compute_type = int8
@@ -122,6 +131,9 @@ hey-whisper --cli
 
 # Specify notes folder, mode, and backend
 hey-whisper -d ~/Notes -m hold --backend auto
+
+# Use NVIDIA Parakeet/Canary via onnx-asr (requires: pip install 'onnx-asr[cpu,hub]')
+hey-whisper --backend nemo --model nemo-parakeet-tdt-0.6b-v3
 ```
 
 ---

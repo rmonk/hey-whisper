@@ -15,6 +15,20 @@ import numpy as np
 
 CACHE_DIR = Path.home() / ".cache" / "hey-whisper" / "models"
 
+# Deliberately pinned to the real home directory rather than left to
+# huggingface_hub's default resolution, which honors $XDG_CACHE_HOME. Under
+# Flatpak, XDG_CACHE_HOME is redirected to the app-scoped
+# ~/.var/app/<id>/cache even with --filesystem=host granted, which would
+# otherwise make Parakeet/Canary downloads invisible to (and duplicated by)
+# a non-sandboxed install of the same app, unlike the GGML cache above.
+HF_CACHE_DIR = Path.home() / ".cache" / "huggingface" / "hub"
+
+# onnx-asr's load_model() doesn't expose a cache_dir argument, so it relies
+# entirely on huggingface_hub's own env-based resolution; setdefault() keeps
+# it (and our own scan_cache_dir/snapshot_download calls) pointed at
+# HF_CACHE_DIR without overriding a user who has already set this themselves.
+os.environ.setdefault("HF_HUB_CACHE", str(HF_CACHE_DIR))
+
 # Known GGML models published under ggerganov/whisper.cpp on Hugging Face,
 # usable by the Vulkan whisper.cpp backend.
 KNOWN_GGML_MODELS = [
@@ -41,6 +55,39 @@ class ModelInfo:
     downloaded: bool
     size_bytes: Optional[int] = None
     path: Optional[Path] = None
+
+
+# Known NVIDIA Parakeet / Canary presets runnable via the onnx-asr package
+# (https://github.com/istupakov/onnx-asr), which serves pre-exported ONNX
+# weights for NeMo models without requiring the full NeMo/PyTorch toolkit.
+NEMO_ONNX_MODELS = [
+    "nemo-parakeet-ctc-0.6b",
+    "nemo-parakeet-rnnt-0.6b",
+    "nemo-parakeet-tdt-0.6b-v2",
+    "nemo-parakeet-tdt-0.6b-v3",
+    "nemo-canary-1b-v2",
+    "istupakov/canary-180m-flash-onnx",
+    "istupakov/canary-1b-flash-onnx",
+]
+
+
+def _nemo_repo_id(model_name: str) -> str:
+    """Map an onnx-asr preset name to its backing Hugging Face repo id."""
+    if "/" in model_name:
+        return model_name
+    if model_name.startswith("nemo-"):
+        return f"istupakov/{model_name[len('nemo-'):]}-onnx"
+    return model_name
+
+
+@dataclass
+class NemoModelInfo:
+    """Local availability info for a known Parakeet/Canary onnx-asr model."""
+
+    name: str
+    repo_id: str
+    downloaded: bool
+    size_bytes: Optional[int] = None
 
 
 @dataclass
@@ -157,6 +204,65 @@ def delete_model(model_name: str) -> bool:
     return False
 
 
+def _scan_nemo_repo_cache(repo_id: str):
+    """Return (downloaded, size_bytes) for a Hugging Face repo in the local hub cache."""
+    try:
+        from huggingface_hub import scan_cache_dir
+    except ImportError:
+        return False, None
+    try:
+        cache_info = scan_cache_dir(cache_dir=str(HF_CACHE_DIR))
+    except Exception:
+        return False, None
+    for repo in cache_info.repos:
+        if repo.repo_id == repo_id and repo.repo_type == "model":
+            return True, repo.size_on_disk
+    return False, None
+
+
+def list_nemo_models() -> list:
+    """List known Parakeet/Canary onnx-asr presets with their local download status."""
+    infos = []
+    for name in NEMO_ONNX_MODELS:
+        repo_id = _nemo_repo_id(name)
+        downloaded, size = _scan_nemo_repo_cache(repo_id)
+        infos.append(NemoModelInfo(name=name, repo_id=repo_id, downloaded=downloaded, size_bytes=size))
+    return infos
+
+
+def download_nemo_model(model_name: str) -> None:
+    """Download a Parakeet/Canary onnx-asr model's weights into the Hugging Face hub cache."""
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as e:
+        raise RuntimeError(
+            "huggingface_hub is required to download NVIDIA Parakeet/Canary models. "
+            "Install with: pip install 'onnx-asr[cpu,hub]'"
+        ) from e
+    snapshot_download(_nemo_repo_id(model_name), cache_dir=str(HF_CACHE_DIR))
+
+
+def delete_nemo_model(model_name: str) -> bool:
+    """Remove a downloaded Parakeet/Canary model from the Hugging Face hub cache. Returns True if removed."""
+    try:
+        from huggingface_hub import scan_cache_dir
+    except ImportError:
+        return False
+    repo_id = _nemo_repo_id(model_name)
+    try:
+        cache_info = scan_cache_dir(cache_dir=str(HF_CACHE_DIR))
+    except Exception:
+        return False
+    for repo in cache_info.repos:
+        if repo.repo_id == repo_id and repo.repo_type == "model":
+            revisions = {rev.commit_hash for rev in repo.revisions}
+            if not revisions:
+                return False
+            cache_info.delete_revisions(*revisions).execute()
+            return True
+    return False
+
+
 def get_system_vulkan_devices() -> list:
     """Query system Vulkan devices via `vulkaninfo --summary`, independent of whisper.cpp."""
     vulkaninfo = shutil.which("vulkaninfo")
@@ -213,7 +319,10 @@ def probe_vulkan_backend(model_path: Optional[Path] = None, timeout: float = 30.
     silent_audio = np.zeros(8000, dtype=np.float32)  # 0.5s of silence
     wav_file = save_audio_to_wav(silent_audio)
     try:
-        cmd = [cli, "-m", str(model_path), "-f", str(wav_file), "-np", "-nt"]
+        # Deliberately omit -np ("no prints"): it suppresses whisper.cpp's
+        # startup log, which is where the Vulkan device banner we need to
+        # parse ("ggml_vulkan: 0 = <device name> | ...") gets printed.
+        cmd = [cli, "-m", str(model_path), "-f", str(wav_file), "-nt"]
         proc = subprocess.run(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout
         )
@@ -277,7 +386,8 @@ def save_audio_to_wav(audio_data: np.ndarray, sample_rate: int = 16000) -> Path:
 
 
 class Transcriber:
-    """Unified transcription manager supporting both Vulkan whisper.cpp and faster-whisper."""
+    """Unified transcription manager supporting Vulkan whisper.cpp, faster-whisper, and
+    NVIDIA Parakeet/Canary (via onnx-asr)."""
 
     def __init__(
         self,
@@ -293,9 +403,11 @@ class Transcriber:
         self.compute_type = compute_type
         self.vulkan_device = vulkan_device
         self._faster_whisper_model = None
+        self._nemo_model = None
         self._whisper_cli = find_whisper_cli()
 
-        # Decide effective backend
+        # Decide effective backend. "nemo" is never auto-selected: it's a heavier
+        # optional dependency the user must opt into explicitly.
         if self.backend == "auto":
             if self._whisper_cli is not None:
                 self.active_backend = "vulkan"
@@ -307,6 +419,10 @@ class Transcriber:
     @property
     def is_vulkan(self) -> bool:
         return self.active_backend == "vulkan"
+
+    @property
+    def is_nemo(self) -> bool:
+        return self.active_backend == "nemo"
 
     def _transcribe_vulkan(self, audio_data: np.ndarray) -> str:
         """Transcribe using whisper-cli with Vulkan acceleration."""
@@ -366,6 +482,21 @@ class Transcriber:
         texts = [s.text.strip() for s in segments if s.text.strip()]
         return " ".join(texts)
 
+    def _transcribe_nemo(self, audio_data: np.ndarray) -> str:
+        """Transcribe using an NVIDIA Parakeet/Canary model via onnx-asr."""
+        if self._nemo_model is None:
+            try:
+                import onnx_asr
+            except ImportError as e:
+                raise RuntimeError(
+                    "onnx-asr is not installed. Install NVIDIA Parakeet/Canary support with: "
+                    "pip install 'onnx-asr[cpu,hub]'"
+                ) from e
+            self._nemo_model = onnx_asr.load_model(self.model_name)
+
+        result = self._nemo_model.recognize(audio_data, sample_rate=16000)
+        return str(result).strip()
+
     def transcribe(self, audio_data: np.ndarray) -> str:
         """Transcribe float32 16kHz audio array."""
         if len(audio_data) == 0:
@@ -376,6 +507,12 @@ class Transcriber:
                 return self._transcribe_vulkan(audio_data)
             except Exception as e:
                 print(f"Warning: Vulkan whisper failed ({e}), falling back to faster-whisper...", file=sys.stderr)
+                return self._transcribe_faster_whisper(audio_data)
+        elif self.active_backend == "nemo":
+            try:
+                return self._transcribe_nemo(audio_data)
+            except Exception as e:
+                print(f"Warning: NVIDIA NeMo (onnx-asr) failed ({e}), falling back to faster-whisper...", file=sys.stderr)
                 return self._transcribe_faster_whisper(audio_data)
         else:
             return self._transcribe_faster_whisper(audio_data)

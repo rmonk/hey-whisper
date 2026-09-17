@@ -45,9 +45,10 @@ def parse_args(argv=None):
     parser.add_argument(
         "--backend",
         dest="backend",
-        choices=["auto", "vulkan", "faster-whisper"],
+        choices=["auto", "vulkan", "faster-whisper", "nemo"],
         default=None,
-        help="Whisper backend engine: auto (detects Vulkan GPU acceleration), vulkan, or faster-whisper",
+        help="Transcription backend: auto (detects Vulkan GPU acceleration), vulkan, faster-whisper, "
+        "or nemo (NVIDIA Parakeet/Canary via onnx-asr, never auto-selected)",
     )
     parser.add_argument(
         "--theme",

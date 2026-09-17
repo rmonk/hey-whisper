@@ -15,7 +15,7 @@ finish-args:
   - --filesystem=host
   - --filesystem=xdg-config/hey-whisper.conf:create
   - --filesystem=xdg-config/spoken-notes.conf:create
-  # Network access for downloading faster-whisper and GGML model weights
+  # Network access for downloading faster-whisper, GGML, and Parakeet/Canary (onnx-asr) model weights
   - --share=network
   # GPU / Vulkan hardware acceleration (AMD, Intel, Nvidia)
   - --device=all
@@ -65,7 +65,7 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - python3 -m pip install --prefix=/app --no-warn-script-location faster-whisper sounddevice numpy PyQt6 dbus-next .
+      - python3 -m pip install --prefix=/app --no-warn-script-location faster-whisper sounddevice numpy PyQt6 dbus-next "onnx-asr[cpu,hub]" .
       - install -Dm644 org.heywhisper.HeyWhisper.desktop /app/share/applications/org.heywhisper.HeyWhisper.desktop
       - install -Dm644 org.heywhisper.HeyWhisper.metainfo.xml /app/share/metainfo/org.heywhisper.HeyWhisper.metainfo.xml
       - install -Dm644 org.heywhisper.HeyWhisper.svg /app/share/icons/hicolor/scalable/apps/org.heywhisper.HeyWhisper.svg
