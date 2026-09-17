@@ -165,12 +165,10 @@ flatpak run org.heywhisper.HeyWhisper
 
 ## Continuous Integration & Automated Releases (GitHub Actions)
 
-A GitHub Actions workflow is set up at [`.github/workflows/flatpak.yml`](.github/workflows/flatpak.yml) to automatically:
+A GitHub Actions workflow is set up at [`.github/workflows/flatpak.yml`](.github/workflows/flatpak.yml), triggered by pushing a version tag matching `vX.Y.Z` (e.g. `v0.5.0`) or manually via `workflow_dispatch`, to automatically:
 1. **Run Unit Tests**: Executes the full test suite (`pytest`) in headless offscreen mode.
 2. **Build Flatpak Application**: Uses `flatpak-builder` with cached builder state and Flathub runtimes.
 3. **Generate Standalone Bundle**: Compiles `hey-whisper.flatpak` with embedded Flathub runtime repository metadata.
 4. **Publish Workflow Artifact**: Uploads `hey-whisper.flatpak` as an artifact on the GitHub Actions run summary.
-5. **Publish to GitHub Releases**:
-   - On pushes to `main`: Updates the `latest` rolling continuous release with the newly built Flatpak bundle attached.
-   - On version tags (`v*`): Creates a published release with release notes and the Flatpak bundle.
+5. **Publish to GitHub Releases**: Creates a published release named after the tag, with release notes and the Flatpak bundle attached.
 
