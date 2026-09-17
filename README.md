@@ -142,6 +142,25 @@ hey-whisper --backend nemo --model nemo-parakeet-tdt-0.6b-v3
 
 A complete Freedesktop / Flatpak manifest is included in [`org.heywhisper.HeyWhisper.yaml`](org.heywhisper.HeyWhisper.yaml). It includes built-in Vulkan GPU acceleration and PipeWire audio capture.
 
+### Install with Auto-Updates (Recommended)
+
+Every tagged release publishes to a self-hosted Flatpak repo via GitHub Pages. Add it once and `flatpak update` will pick up every new release from then on — no manual downloads:
+
+```bash
+flatpak remote-add --user --no-gpg-verify hey-whisper https://rmonk.github.io/hey-whisper/repo
+flatpak install --user hey-whisper org.heywhisper.HeyWhisper
+```
+
+This repo is unsigned (no GPG key), relying on HTTPS/GitHub for transport authenticity rather than a signed OSTree commit chain — reasonable for a small self-hosted repo, but worth knowing if you have stricter trust requirements.
+
+### One-Off Install from a Downloaded Bundle
+
+Each [GitHub Release](https://github.com/rmonk/hey-whisper/releases) also attaches a standalone `hey-whisper.flatpak` bundle. This is a snapshot, not a tracked remote — installing it this way does **not** auto-update; re-download and re-install (`--reinstall`) for each new version, or switch to the repo method above.
+
+```bash
+flatpak install --user -y --reinstall hey-whisper.flatpak
+```
+
 ### Build and Install with flatpak-builder
 
 ```bash
