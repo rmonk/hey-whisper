@@ -59,6 +59,10 @@ jobs:
     name: Build & Publish Flatpak
     needs: test
     runs-on: ubuntu-latest
+    # Successful runs have taken 10-15 minutes; this is a backstop against any
+    # step hanging indefinitely (GitHub's own default is 360 minutes) rather
+    # than failing fast, which has happened before with release-asset uploads.
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -257,15 +261,19 @@ jobs:
         run: |
           # Uploading the ~140MB bundle via the release action's built-in (octokit)
           # asset upload has intermittently failed or hung. `gh release upload` goes
-          # through a different code path and has been more reliable for large
-          # assets; --clobber makes a retry safe even if a partial asset from a
-          # previous attempt is already there.
+          # through a different code path and has been more reliable, but a single
+          # attempt has itself been observed to hang indefinitely (no response, no
+          # error) rather than failing fast - which defeats a plain retry loop,
+          # since a hung attempt never returns to let the loop retry. Wrap each
+          # attempt in `timeout` so a stall gets killed and actually retried.
+          # --clobber makes a retry safe even if a partial asset from a previous
+          # attempt is already there.
           for attempt in 1 2 3; do
-            if gh release upload "${{ steps.release_info.outputs.tag }}" hey-whisper.flatpak --clobber; then
+            if timeout 180 gh release upload "${{ steps.release_info.outputs.tag }}" hey-whisper.flatpak --clobber; then
               echo "Upload succeeded on attempt ${attempt}"
               exit 0
             fi
-            echo "Upload attempt ${attempt} failed, retrying in 15s..."
+            echo "Upload attempt ${attempt} failed or timed out, retrying in 15s..."
             sleep 15
           done
           echo "::error::Failed to upload hey-whisper.flatpak after 3 attempts"
