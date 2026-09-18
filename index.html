@@ -1,17 +1,408 @@
 <!DOCTYPE html>
-<html>
-<head><title>Hey Whisper Flatpak Repo</title></head>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hey Whisper — Local voice notes for the Linux desktop</title>
+<meta name="description" content="Hey Whisper listens on your microphone, transcribes with GPU-accelerated Whisper (or NVIDIA Parakeet/Canary), and keeps tidy weekly markdown logs — entirely on your machine.">
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-elevated: #161b22;
+    --bg-inset: #010409;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-strong: #79c0ff;
+    --green: #3fb950;
+    --shadow: 0 8px 24px rgba(1, 4, 9, 0.6);
+    --radius: 12px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent-strong); text-decoration: underline; }
+
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  header.hero {
+    padding: 64px 0 48px;
+    text-align: center;
+    background:
+      radial-gradient(700px 320px at 50% -80px, rgba(88, 166, 255, 0.18), transparent 70%),
+      var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    width: 84px;
+    height: 84px;
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+  }
+
+  h1 {
+    font-size: 2.4rem;
+    margin: 24px 0 8px;
+    letter-spacing: -0.02em;
+  }
+
+  .tagline {
+    color: var(--text-muted);
+    font-size: 1.15rem;
+    max-width: 640px;
+    margin: 0 auto 28px;
+  }
+
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 32px;
+  }
+
+  .badge {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: 999px;
+  }
+
+  .cta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    border: 1px solid var(--border);
+  }
+
+  .btn:hover { text-decoration: none; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #0d1117;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: var(--accent-strong); color: #0d1117; }
+
+  .btn-secondary {
+    background: var(--bg-elevated);
+    color: var(--text);
+  }
+  .btn-secondary:hover { background: #21262d; color: var(--text); }
+
+  main { padding: 0 0 32px; }
+
+  section {
+    padding: 56px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  section:last-of-type { border-bottom: none; }
+
+  h2 {
+    font-size: 1.7rem;
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+
+  .section-lead {
+    color: var(--text-muted);
+    max-width: 680px;
+    margin: 0 0 36px;
+  }
+
+  figure {
+    margin: 0;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  figcaption {
+    padding: 14px 18px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+  }
+
+  figcaption strong { color: var(--text); }
+
+  .hero-shot { margin-bottom: 8px; }
+
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 20px;
+  }
+
+  .feature {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+
+  .feature h3 {
+    margin: 0 0 8px;
+    font-size: 1.02rem;
+  }
+
+  .feature p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+  }
+
+  .feature .emoji {
+    font-size: 1.4rem;
+    margin-bottom: 8px;
+    display: block;
+  }
+
+  pre {
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  p code, li code {
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 0.88em;
+  }
+
+  .install-note {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 12px;
+  }
+
+  ol.steps {
+    padding-left: 1.2rem;
+    color: var(--text-muted);
+  }
+  ol.steps li { margin-bottom: 6px; }
+  ol.steps strong { color: var(--text); }
+
+  footer {
+    padding: 40px 0 56px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  footer .links {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  footer .links a {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  @media (max-width: 720px) {
+    .config-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 1.9rem; }
+    section { padding: 40px 0; }
+  }
+</style>
+</head>
 <body>
-<h1>Hey Whisper Flatpak Repository</h1>
-<p>Self-hosted, GPG-signed Flatpak repository for
-<a href="https://github.com/rmonk/hey-whisper">Hey Whisper</a>. Add it once and
-<code>flatpak update</code> picks up every new release automatically.</p>
-<pre>flatpak remote-add --user --if-not-exists --from hey-whisper https://rmonk.github.io/hey-whisper/hey-whisper.flatpakrepo
-flatpak install --user hey-whisper org.heywhisper.HeyWhisper</pre>
-<p><code>--from</code> reads the <a href="hey-whisper.flatpakrepo">.flatpakrepo file</a>, which embeds
-the repo's GPG public key, so signature verification is configured automatically - no
-<code>--no-gpg-verify</code> needed. The public key is also available directly at
-<a href="repo/hey-whisper-repo-signing-key.asc">repo/hey-whisper-repo-signing-key.asc</a>.</p>
-<p>Latest published version: <strong>v0.6.1</strong></p>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="logo" src="logo.svg" alt="Hey Whisper logo">
+    <h1>Hey Whisper</h1>
+    <p class="tagline">
+      A desktop voice-notes app for Linux. Hold a key, talk, and it transcribes
+      straight into tidy weekly markdown logs — running entirely on your own
+      GPU or CPU, with nothing sent to the cloud.
+    </p>
+    <div class="badges">
+      <span class="badge">GPU-accelerated (Vulkan)</span>
+      <span class="badge">100% local transcription</span>
+      <span class="badge">Flatpak, auto-updating</span>
+      <span class="badge">Plain markdown output</span>
+    </div>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#install">Install Hey Whisper</a>
+      <a class="btn btn-secondary" href="https://github.com/rmonk/hey-whisper">View on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="overview">
+    <div class="wrap">
+      <h2>Talk instead of type</h2>
+      <p class="section-lead">
+        Hey Whisper sits quietly in the background. Press and hold a hotkey,
+        say what's on your mind, and let go — your words land in a
+        day-by-day markdown file a second later, no browser tab or account
+        required.
+      </p>
+      <figure class="hero-shot">
+        <img src="screenshots/main-window.png" alt="Hey Whisper main window showing the record button, mic level meter, month tree of notes, and the markdown editor with a live preview tab">
+        <figcaption>
+          <strong>The main window.</strong> Notes are grouped by year → month → week on
+          the left; the editor on the right supports raw markdown and a rendered preview.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>What it does</h2>
+      <p class="section-lead">
+        Everything runs locally. Pick the transcription backend that fits your hardware,
+        the trigger mode that fits how you work, and let it write your notes for you.
+      </p>
+      <div class="features-grid">
+        <div class="feature">
+          <span class="emoji">⚡</span>
+          <h3>GPU-accelerated transcription</h3>
+          <p>Full Vulkan acceleration via <code>whisper.cpp</code> works across NVIDIA, AMD, and Intel GPUs, with automatic fallback to CPU-optimized <code>faster-whisper</code>.</p>
+        </div>
+        <div class="feature">
+          <span class="emoji">🧠</span>
+          <h3>NVIDIA Parakeet &amp; Canary</h3>
+          <p>Optionally run NVIDIA's Parakeet or Canary models via the lightweight <code>onnx-asr</code> package — no PyTorch or full NeMo toolkit needed.</p>
+        </div>
+        <div class="feature">
+          <span class="emoji">🎙️</span>
+          <h3>Three trigger modes</h3>
+          <p>Push-to-talk (<code>hold</code>), click-to-toggle, or hands-free voice-activity detection (<code>silence</code>) that starts and stops automatically.</p>
+        </div>
+        <div class="feature">
+          <span class="emoji">📅</span>
+          <h3>Weekly markdown logs</h3>
+          <p>Notes are grouped into one file per calendar week, with each day under its own heading and a timestamp on every entry.</p>
+        </div>
+        <div class="feature">
+          <span class="emoji">🖥️</span>
+          <h3>Desktop GUI &amp; CLI</h3>
+          <p>A full Qt6 interface with a live VU meter and auto-save, or run headless with <code>hey-whisper --cli</code> for quick terminal note-taking.</p>
+        </div>
+        <div class="feature">
+          <span class="emoji">🔒</span>
+          <h3>Nothing leaves your machine</h3>
+          <p>No accounts, no network calls for transcription. Your voice and your notes stay on disk, in plain markdown you can read and edit with anything.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="configuration">
+    <div class="wrap">
+      <h2>Configured your way</h2>
+      <p class="section-lead">
+        Everything is adjustable from a Settings dialog — no config file
+        editing required, though one's there too if you prefer it.
+      </p>
+      <div class="config-grid">
+        <figure>
+          <img src="screenshots/settings-general.png" alt="General settings tab showing trigger mode, notes storage location, note prefix format, hotkeys, and color theme">
+          <figcaption><strong>General —</strong> trigger mode, where notes are saved, the timestamp prefix format, hotkeys, and light/dark theme.</figcaption>
+        </figure>
+        <figure>
+          <img src="screenshots/settings-engine.png" alt="Engine settings tab showing the Whisper backend selector, active model, list of downloadable models, and Vulkan GPU status">
+          <figcaption><strong>Engine —</strong> pick the transcription backend and model, download or delete models, and check Vulkan GPU status.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install</h2>
+      <p class="section-lead">
+        Hey Whisper ships as a Flatpak with Vulkan and PipeWire built in.
+        The self-hosted repo below is GPG-signed and keeps itself up to date.
+      </p>
+      <pre><code>flatpak remote-add --user --if-not-exists --from hey-whisper https://rmonk.github.io/hey-whisper/hey-whisper.flatpakrepo
+flatpak install --user hey-whisper org.heywhisper.HeyWhisper</code></pre>
+      <p class="install-note">
+        <code>flatpak update</code> will then pick up every new release automatically — no
+        manual re-downloading. Prefer a one-off install instead? Grab the standalone
+        <code>hey-whisper.flatpak</code> bundle from the
+        <a href="https://github.com/rmonk/hey-whisper/releases">latest release</a>.
+        Full details, the config file format, and build-from-source instructions are in the
+        <a href="https://github.com/rmonk/hey-whisper#readme">README</a>.
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/rmonk/hey-whisper">hey-whisper repository</a>
+      <a href="https://github.com/rmonk/hey-whisper/releases">Releases</a>
+      <a href="https://github.com/rmonk">@rmonk on GitHub</a>
+    </div>
+    <p>Built by <a href="https://github.com/rmonk">Richard Monk</a>. Source available on GitHub.</p>
+  </div>
+</footer>
+
 </body>
 </html>
