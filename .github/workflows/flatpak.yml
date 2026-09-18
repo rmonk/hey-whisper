@@ -218,7 +218,10 @@ jobs:
 
           rsync -a --delete --exclude='.lock' repo/ "${PUBLISH_DIR}/repo/"
           cp repo/hey-whisper.flatpakrepo "${PUBLISH_DIR}/hey-whisper.flatpakrepo"
-          cp repo/index.html "${PUBLISH_DIR}/index.html"
+          # Note: the site root (index.html, logo.svg, screenshots/) is a
+          # hand-maintained landing page, not touched by this workflow. Only
+          # repo/index.html (the Flatpak repo's own status page) is generated
+          # here.
 
           cd "${PUBLISH_DIR}"
           git config user.name "github-actions[bot]"
