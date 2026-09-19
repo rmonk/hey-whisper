@@ -81,6 +81,17 @@ jobs:
             exit 1
           fi
 
+      - name: Sync app version with release tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          # The committed __version__/pyproject.toml version isn't bumped per release
+          # (releases are just `git tag vX.Y.Z && git push`), so without this the
+          # version shown in the app's settings dialog silently drifts from the tag
+          # actually being built and released. Stamp both from the tag name instead.
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = \".*\"/version = \"${TAG_VERSION}\"/" pyproject.toml
+          sed -i "s/^__version__ = \".*\"/__version__ = \"${TAG_VERSION}\"/" src/hey_whisper/__init__.py
+
       - name: Maximize Runner Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift 2>/dev/null || true
