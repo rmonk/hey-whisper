@@ -55,6 +55,10 @@ modules:
       - -DPA_BUILD_SHARED=ON
       - -DPA_USE_ALSA=ON
       - -DPA_USE_PULSEAUDIO=ON
+      # portaudio's own CMakeLists.txt declares `cmake_minimum_required(VERSION 2.8)`,
+      # which CMake >= 4.0 (shipped in org.kde.Sdk//6.11+) refuses to configure at
+      # all rather than just warning, since compatibility below 3.5 was removed.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     sources:
       - type: archive
         url: https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz
