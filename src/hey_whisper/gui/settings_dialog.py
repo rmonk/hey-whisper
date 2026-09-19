@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QApplication,
 )
 
+from hey_whisper import __version__
 from hey_whisper.config import AppConfig, save_config
 from hey_whisper.storage import format_entry_line, DEFAULT_NOTE_PREFIX
 from hey_whisper.gui.theme import ThemeColors
@@ -179,7 +180,15 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._make_scroll_tab(engine_page), "Engine")
         main_layout.addWidget(self.tabs)
 
-        # Dialog Buttons (shared across tabs)
+        # Dialog Buttons (shared across tabs), with the version number anchored
+        # to the bottom-left corner in the same row so it's always visible
+        # regardless of which tab is active.
+        footer_row = QHBoxLayout()
+        self.version_label = QLabel(f"v{__version__}")
+        self.version_label.setStyleSheet("font-size: 11px; opacity: 0.6;")
+        footer_row.addWidget(self.version_label)
+        footer_row.addStretch()
+
         btn_box = QDialogButtonBox()
         self.save_btn = btn_box.addButton(" Save && Apply", QDialogButtonBox.ButtonRole.AcceptRole)
         self.save_btn.setIcon(create_check_icon(size=14, color="#ffffff"))
@@ -187,7 +196,9 @@ class SettingsDialog(QDialog):
         self.cancel_btn = btn_box.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
         btn_box.accepted.connect(self._save_and_apply)
         btn_box.rejected.connect(self.reject)
-        main_layout.addWidget(btn_box)
+        footer_row.addWidget(btn_box)
+
+        main_layout.addLayout(footer_row)
 
     def _build_general_tab(self) -> QWidget:
         page = QWidget()
