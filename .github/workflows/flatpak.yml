@@ -103,9 +103,9 @@ jobs:
           restore-keys: |
             flatpak-builder-${{ runner.os }}-
 
-      - name: Install KDE 6.6 Platform and SDK
+      - name: Install KDE 6.11 Platform and SDK
         run: |
-          flatpak install --user -y --noninteractive flathub org.kde.Platform//6.6 org.kde.Sdk//6.6
+          flatpak install --user -y --noninteractive flathub org.kde.Platform//6.11 org.kde.Sdk//6.11
 
       - name: Import GPG Signing Key
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
