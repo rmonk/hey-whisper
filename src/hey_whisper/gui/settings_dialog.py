@@ -650,7 +650,7 @@ class SettingsDialog(QDialog):
             if worker.isRunning():
                 _ORPHANED_WORKERS.add(worker)
 
-                def _release(w=worker):
+                def _release(*_args, w=worker):
                     _ORPHANED_WORKERS.discard(w)
 
                 for sig in signals:
