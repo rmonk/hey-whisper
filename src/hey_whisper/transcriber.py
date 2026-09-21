@@ -30,6 +30,17 @@ HF_CACHE_DIR = Path.home() / ".cache" / "huggingface" / "hub"
 # HF_CACHE_DIR without overriding a user who has already set this themselves.
 os.environ.setdefault("HF_HUB_CACHE", str(HF_CACHE_DIR))
 
+# huggingface_hub's Xet backend dedupes large files into a cache-wide shared
+# blob store sharded by hash prefix (~/.cache/huggingface/hub/blobs/<prefix>/<hash>),
+# with each per-repo file symlinked through it. For multi-file ONNX repos like
+# the Parakeet/Canary presets, the main .onnx graph and its external-weights
+# "*.onnx.data" sidecar are different blobs and land in different shard
+# directories - which onnxruntime's external-data path check then rejects as
+# "escaping the model directory" (it requires both to resolve under the same
+# directory). Disabling Xet makes huggingface_hub fall back to its classic
+# per-repo blob layout, where sibling files share one directory.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 # Known GGML models published under ggerganov/whisper.cpp on Hugging Face,
 # usable by the Vulkan whisper.cpp backend.
 KNOWN_GGML_MODELS = [
