@@ -81,6 +81,13 @@ modules:
       - -DGGML_VULKAN=ON
       - -DVulkan_GLSLC_EXECUTABLE=/app/bin/glslc
       - -DWHISPER_BUILD_EXAMPLES=ON
+      # whisper.cpp defaults to BUILD_SHARED_LIBS=ON, which links whisper-cli
+      # against libwhisper.so.1 - but that shared library is never installed
+      # into /app/lib by this module's install step, so whisper-cli fails at
+      # runtime with "error while loading shared libraries: libwhisper.so.1:
+      # cannot open shared object file". Force static linking instead so
+      # whisper-cli has no runtime dependency on a library that isn't there.
+      - -DBUILD_SHARED_LIBS=OFF
     sources:
       - type: archive
         url: https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.7.4.tar.gz
