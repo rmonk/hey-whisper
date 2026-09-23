@@ -121,9 +121,11 @@ describe('Sidecar', () => {
 	test('includes output written just before an immediate exit', async () => {
 		// Like argparse rejecting an unknown --serve flag on an old install. The
 		// noise overfills the pipe so the last line tends to be read late; the
-		// report must still include it.
-		const script = 'for (let i = 0; i < 20000; i++) process.stderr.write(`noise ${i}\\n`);'
-			+ ' process.stderr.write(\'error: unrecognized arguments: --serve\\n\'); process.exit(2)';
+		// report must still include it. Writes are synchronous (like Python's
+		// stderr): process.stderr.write can drop queued output on process.exit.
+		const script = 'const fs = require(\'fs\');'
+			+ ' for (let i = 0; i < 20000; i++) fs.writeSync(2, `noise ${i}\\n`);'
+			+ ' fs.writeSync(2, \'error: unrecognized arguments: --serve\\n\'); process.exit(2)';
 		const events: SidecarEvent[] = [];
 		const sidecar = new Sidecar(async () => [process.execPath, '-e', script], e => events.push(e));
 		await sidecar.send({ cmd: 'status' });
