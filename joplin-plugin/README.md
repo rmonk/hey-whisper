@@ -35,7 +35,7 @@ The model, backend, note prefix and silence settings all come from `~/.config/he
 ## Requirements
 
 - Joplin desktop 3.7 or newer. Mobile isn't supported, because the plugin needs to start a local process.
-- A Hey Whisper release newer than 0.6.2 (the first with `hey-whisper --serve`), installed with pip or as the Flatpak.
+- Hey Whisper 0.7.0 or newer (the first release with `hey-whisper --serve`), installed with pip or as the Flatpak.
 
 ## Install
 
@@ -60,20 +60,35 @@ The model, backend, note prefix and silence settings all come from `~/.config/he
 
 ## Use
 
-- **Panel** (**Tools → Hey Whisper → Show/hide panel**): the record button, a VU meter, the engine in use, and the last saved entry. <kbd>Esc</kbd> cancels a recording while the panel has focus.
-- **Keyboard shortcut**: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> starts and stops a recording. You can rebind it under **Tools → Options → Keyboard Shortcuts**.
-- **Note toolbar**: the 🎤 button does the same as the shortcut.
-- **Open this week's voice notes** jumps to the current weekly note.
+Recording is controlled from the 🎤 button in the note toolbar (top right) or the keyboard:
+
+| Action | Button / shortcut |
+|---|---|
+| Start / finish a voice note | 🎤, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> |
+| Cancel the current recording | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> |
+| Open this week's voice notes | **Tools → Hey Whisper → Open this week's voice notes** |
+
+The shortcuts work anywhere in Joplin while its window is focused. They aren't system-wide. You can rebind them under **Tools → Options → Keyboard Shortcuts**, but the pop-up hints keep naming the defaults.
+
+Short pop-up messages show what's happening:
+- "Starting Hey Whisper…", on first use while the engine loads
+- "🎙️ Recording…"
+- "Transcribing…"
+- "Saved to Voice Notes › 2026-09-07: …" with the start of the text
+- a message when nothing was recorded or a recording was cancelled
+- errors, which include the transcript if it couldn't be saved
+
+**Optional panel** (**Tools → Hey Whisper → Show/hide panel**): a sidebar with a big record button, a level meter, the engine in use and the last saved entry. It's hidden by default. While it's showing, messages appear in the panel instead of as pop-ups. <kbd>Esc</kbd> cancels a recording while the panel has focus.
 
 **Recording mode** (in Options):
 
-| Mode | Panel button | Shortcut / toolbar |
+| Mode | 🎤 button / shortcut | Panel button |
 |---|---|---|
-| Hold (default) | Press and hold to talk, release to finish | Toggles |
-| Toggle | Click to start, click again to finish | Toggles |
-| Silence | Click to start; stops when you pause | Starts; stops when you pause (or press again) |
+| Toggle (default) | Press to start, press again to finish | Same |
+| Silence | Press to start; stops when you pause (or press again) | Same |
+| Hold | Toggles | Press and hold to talk, release to finish |
 
-Joplin shortcuts don't report key release, so push-to-talk only works with the panel button.
+Joplin's toolbar buttons and shortcuts don't report release, so push-to-talk (Hold) needs the panel.
 
 If you're editing the weekly note while a transcript arrives, Joplin reloads the note with the new entry. Unsaved edits typed in the last moment before that can be lost, so it's safest to dictate while viewing a different note.
 

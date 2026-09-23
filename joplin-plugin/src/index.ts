@@ -11,6 +11,11 @@ const SETTING_MODE = 'heyWhisper.mode';
 const SETTING_COMMAND = 'heyWhisper.sidecarCommand';
 const SETTING_PANEL_VISIBLE = 'heyWhisper.panelVisible';
 
+const TOGGLE_ACCELERATOR = 'CmdOrCtrl+Shift+Space';
+const CANCEL_ACCELERATOR = 'CmdOrCtrl+Shift+Backspace';
+// For pop-up text; matches the default accelerators above
+const MOD_KEY = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
+
 type Mode = 'hold' | 'toggle' | 'silence';
 
 // Everything the panel needs to render, pushed to it after every change.
@@ -67,12 +72,20 @@ function setMessage(message: string, kind: 'info' | 'error' | '' = 'info') {
 	state.messageKind = kind;
 }
 
+// Pop-up message, shown only while the panel is hidden (the panel shows state.message).
+async function notify(message: string, type: ToastType = ToastType.Info, duration = 3000) {
+	if (panel && await joplin.views.panels.visible(panel)) return;
+	await joplin.views.dialogs.showToast({ message, type, duration });
+}
+
 async function notifyError(message: string) {
 	setMessage(message, 'error');
 	pushState();
-	if (!(await joplin.views.panels.visible(panel))) {
-		await joplin.views.dialogs.showToast({ message: `Hey Whisper: ${message}`, type: ToastType.Error, duration: 6000 });
-	}
+	await notify(`Hey Whisper: ${message}`, ToastType.Error, 6000);
+}
+
+function truncate(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
 async function loadRoot() {
@@ -113,6 +126,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		state.status = 'starting';
 		state.command = evt.command;
 		setMessage('Starting the Hey Whisper engine…');
+		void notify('Starting Hey Whisper…');
 		break;
 	case 'ready':
 		state.status = 'idle';
@@ -124,6 +138,13 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		recording = true;
 		startPending = false;
 		setMessage(evt.mode === 'silence' ? 'Listening… stops when you pause.' : 'Recording…');
+		void notify(
+			evt.mode === 'silence'
+				? `🎙️ Listening — stops when you pause (${MOD_KEY}+Shift+Backspace to cancel)`
+				: `🎙️ Recording — click the mic or press ${MOD_KEY}+Shift+Space to finish, ${MOD_KEY}+Shift+Backspace to cancel`,
+			ToastType.Info,
+			4000,
+		);
 		break;
 	case 'level':
 		if (panel) joplin.views.panels.postMessage(panel, { type: 'level', rms: evt.rms, peak: evt.peak });
@@ -132,6 +153,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		recording = false;
 		pendingTranscripts++;
 		setMessage('Transcribing…');
+		void notify('Transcribing…');
 		break;
 	case 'transcript':
 		pendingTranscripts = Math.max(0, pendingTranscripts - 1);
@@ -141,6 +163,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 			state.lastEntry = evt.entry_line;
 			state.lastNote = week.title;
 			setMessage(`Saved to ${state.rootTitle} › ${week.title}`);
+			void notify(`Saved to ${state.rootTitle} › ${week.title}: ${truncate(evt.text, 80)}`, ToastType.Success, 5000);
 		} catch (error) {
 			// Don't lose the words: surface them so they can be pasted manually
 			await notifyError(`Could not save note (${error.message}). Transcript: ${evt.text}`);
@@ -151,11 +174,13 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		recording = false;
 		pendingTranscripts = Math.max(0, pendingTranscripts - 1);
 		setMessage(evt.reason || 'Nothing recorded.');
+		void notify(state.message);
 		break;
 	case 'cancelled':
 		recording = false;
 		startPending = false;
 		setMessage('Recording cancelled.');
+		void notify(state.message, ToastType.Info, 2000);
 		break;
 	case 'status':
 		recording = !!evt.recording;
@@ -199,6 +224,10 @@ async function stopRecording() {
 	if (recording || startPending) await sidecar.send({ cmd: 'stop' });
 }
 
+async function cancelRecording() {
+	if (recording || startPending) await sidecar.send({ cmd: 'cancel' });
+}
+
 async function toggleRecording() {
 	if (recording || startPending) await stopRecording();
 	else await startRecording(state.mode);
@@ -224,6 +253,7 @@ async function useSelectedNotebook() {
 	await loadRoot();
 	setMessage(`Voice notes will be saved under "${folder.title}".`);
 	pushState();
+	await notify(state.message, ToastType.Success);
 }
 
 async function setupPanel() {
@@ -246,7 +276,7 @@ async function setupPanel() {
 			await stopRecording();
 			break;
 		case 'cancel':
-			await sidecar.send({ cmd: 'cancel' });
+			await cancelRecording();
 			break;
 		case 'openWeek':
 			await openThisWeek();
@@ -273,14 +303,14 @@ joplin.plugins.register({
 				public: true,
 				type: SettingItemType.String,
 				isEnum: true,
-				value: 'hold',
+				value: 'toggle',
 				options: {
-					hold: 'Hold: press and hold the panel button to talk',
+					hold: 'Hold: press and hold the panel button to talk (needs the panel)',
 					toggle: 'Toggle: click to start, click again to finish',
 					silence: 'Silence: stop automatically when you pause',
 				},
 				label: 'Recording mode',
-				description: 'The keyboard shortcut always toggles (in Silence mode it also stops when you pause).',
+				description: 'The mic button and keyboard shortcut always toggle (in Silence mode recording also stops when you pause).',
 			},
 			[SETTING_COMMAND]: {
 				section: SECTION,
@@ -302,7 +332,7 @@ joplin.plugins.register({
 				section: SECTION,
 				public: false,
 				type: SettingItemType.Bool,
-				value: true,
+				value: false,
 				label: 'Show the Hey Whisper panel',
 			},
 		});
@@ -330,6 +360,12 @@ joplin.plugins.register({
 			execute: toggleRecording,
 		});
 		await joplin.commands.register({
+			name: 'heyWhisper.cancelRecording',
+			label: 'Hey Whisper: Cancel recording',
+			iconName: 'fas fa-times',
+			execute: cancelRecording,
+		});
+		await joplin.commands.register({
 			name: 'heyWhisper.openThisWeek',
 			label: 'Hey Whisper: Open this week\'s voice notes',
 			iconName: 'fas fa-calendar-week',
@@ -353,7 +389,8 @@ joplin.plugins.register({
 		});
 
 		await joplin.views.menus.create('heyWhisper.menu', 'Hey Whisper', [
-			{ commandName: 'heyWhisper.toggleRecording', accelerator: 'CmdOrCtrl+Shift+Space' },
+			{ commandName: 'heyWhisper.toggleRecording', accelerator: TOGGLE_ACCELERATOR },
+			{ commandName: 'heyWhisper.cancelRecording', accelerator: CANCEL_ACCELERATOR },
 			{ commandName: 'heyWhisper.openThisWeek' },
 			{ commandName: 'heyWhisper.useSelectedNotebook' },
 			{ commandName: 'heyWhisper.togglePanel' },
