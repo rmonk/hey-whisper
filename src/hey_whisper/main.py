@@ -78,6 +78,12 @@ def parse_args(argv=None):
         action="store_true",
         help="Run in command-line mode instead of launching GUI",
     )
+    parser.add_argument(
+        "--serve",
+        dest="serve_mode",
+        action="store_true",
+        help="Run as a JSON-lines sidecar on stdin/stdout (used by the Joplin plugin)",
+    )
     return parser.parse_args(argv)
 
 
@@ -94,6 +100,10 @@ def main(argv=None):
         cli_note_prefix=args.note_prefix,
         config_path=args.config_path,
     )
+
+    if args.serve_mode:
+        from hey_whisper.serve import run_serve
+        return run_serve(config)
 
     # If --cli explicitly passed, or headless environment (no DISPLAY / WAYLAND_DISPLAY)
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))

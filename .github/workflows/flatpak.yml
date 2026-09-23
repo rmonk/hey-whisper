@@ -55,9 +55,53 @@ jobs:
         run: |
           pytest -v --timeout=30 --durations=10
 
+  joplin-plugin:
+    name: Test & Build Joplin Plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: joplin-plugin
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: joplin-plugin/package-lock.json
+
+      - name: Sync plugin version with release tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          # Same reasoning as the app's version sync below: releases are just tags.
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          npm pkg set version="${TAG_VERSION}"
+          sed -i "s/\"version\": \".*\"/\"version\": \"${TAG_VERSION}\"/" src/manifest.json
+
+      - name: Install dependencies
+        # --ignore-scripts skips the "prepare" build; it runs explicitly below
+        run: npm ci --ignore-scripts
+
+      - name: Run Jest
+        run: npm test
+
+      - name: Build plugin archive (.jpl)
+        run: npm run dist
+
+      - name: Upload plugin as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hey-whisper-joplin-plugin
+          path: joplin-plugin/publish/org.heywhisper.joplin.jpl
+          if-no-files-found: error
+          retention-days: 30
+
   build-and-publish:
     name: Build & Publish Flatpak
-    needs: test
+    needs: [test, joplin-plugin]
     runs-on: ubuntu-latest
     # Successful runs have taken 10-15 minutes; this is a backstop against any
     # step hanging indefinitely (GitHub's own default is 360 minutes) rather
@@ -317,6 +361,20 @@ jobs:
           done
           echo "::error::Failed to upload hey-whisper.flatpak after 3 attempts"
           exit 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Joplin Plugin Artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/download-artifact@v4
+        with:
+          name: hey-whisper-joplin-plugin
+          path: joplin-plugin-dist
+
+      - name: Upload Joplin Plugin to Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          timeout 120 gh release upload "${{ steps.release_info.outputs.tag }}" joplin-plugin-dist/org.heywhisper.joplin.jpl --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

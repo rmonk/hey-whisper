@@ -33,8 +33,10 @@ def run_cli(config: AppConfig) -> int:
 
     transcriber = Transcriber(
         model_name=config.model,
+        backend=config.backend,
         device=config.device,
         compute_type=config.compute_type,
+        vulkan_device=config.vulkan_device,
     )
 
     silence_mode = (config.mode == "silence")
@@ -61,7 +63,7 @@ def run_cli(config: AppConfig) -> int:
             recorder.stop_recording()
             return 0
 
-    print("⏳ Stopping capture and transcribing with faster-whisper...")
+    print(f"⏳ Stopping capture and transcribing ({transcriber.active_backend})...")
     audio_data = recorder.stop_recording()
 
     if len(audio_data) < int(16000 * 0.3):
