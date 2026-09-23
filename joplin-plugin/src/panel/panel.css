@@ -1,0 +1,114 @@
+#hey-whisper-root {
+	font-family: var(--joplin-font-family, sans-serif);
+	font-size: var(--joplin-font-size, 13px);
+	color: var(--joplin-color, #333);
+	background: var(--joplin-background-color, #fff);
+	padding: 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.hw-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.hw-title {
+	font-weight: bold;
+}
+
+.hw-engine {
+	color: var(--joplin-color-faded, #777);
+	font-size: 0.9em;
+}
+
+.hw-record {
+	padding: 12px;
+	font: inherit;
+	font-weight: bold;
+	border-radius: 6px;
+	border: 1px solid var(--joplin-divider-color, #ccc);
+	background: var(--joplin-background-color3, #eef);
+	color: var(--joplin-color, #333);
+	cursor: pointer;
+	user-select: none;
+	touch-action: none;
+}
+
+.hw-record:disabled {
+	cursor: progress;
+	opacity: 0.7;
+}
+
+.hw-record.hw-recording {
+	background: #c62828;
+	border-color: #c62828;
+	color: #fff;
+}
+
+.hw-meter {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--joplin-background-color3, #eee);
+	overflow: hidden;
+}
+
+.hw-meter-fill {
+	height: 100%;
+	width: 0%;
+	background: #2e7d32;
+	transition: width 60ms linear;
+}
+
+.hw-meter-fill[data-level="mid"] { background: #f9a825; }
+.hw-meter-fill[data-level="high"] { background: #c62828; }
+
+.hw-message {
+	min-height: 1.2em;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.hw-message.hw-error {
+	color: var(--joplin-color-error, #c62828);
+}
+
+.hw-last {
+	border-left: 3px solid var(--joplin-divider-color, #ccc);
+	padding-left: 8px;
+}
+
+.hw-last-note {
+	color: var(--joplin-color-faded, #777);
+	font-size: 0.9em;
+}
+
+.hw-last-entry {
+	overflow-wrap: anywhere;
+}
+
+.hw-footer {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	align-items: center;
+	color: var(--joplin-color-faded, #777);
+	font-size: 0.9em;
+}
+
+.hw-root {
+	flex-basis: 100%;
+}
+
+.hw-link {
+	background: none;
+	border: none;
+	padding: 0;
+	font: inherit;
+	color: var(--joplin-url-color, #155bda);
+	cursor: pointer;
+	text-decoration: underline;
+}

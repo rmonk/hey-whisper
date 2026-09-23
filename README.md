@@ -25,6 +25,7 @@ A desktop voice-notes tool that listens on your default microphone, transcribes 
   - **Live VU Audio Meter**: Visual green-yellow-red bar confirms microphone input level in real time.
   - **Debounced Auto-Save**: In-place edits are saved automatically.
 - **CLI Mode**: Run `hey-whisper --cli` for quick terminal note-taking or headless scripting.
+- **Joplin Plugin**: Dictate straight into Joplin, with weekly notes filed under Year → Month notebooks. See [`joplin-plugin/`](joplin-plugin/README.md).
 
 ---
 

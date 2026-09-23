@@ -1,0 +1,17 @@
+{
+	"manifest_version": 1,
+	"id": "org.heywhisper.joplin",
+	"app_min_version": "3.7",
+	"version": "0.1.0",
+	"name": "Hey Whisper",
+	"description": "Dictate voice notes into weekly Joplin notes (Year > Month > week) using the Hey Whisper speech-to-text engine.",
+	"author": "Richard Monk",
+	"homepage_url": "https://github.com/rmonk/hey-whisper",
+	"repository_url": "https://github.com/rmonk/hey-whisper",
+	"keywords": ["voice", "dictation", "whisper", "speech-to-text", "journal"],
+	"categories": ["productivity"],
+	"platforms": ["desktop"],
+	"screenshots": [],
+	"icons": {},
+	"promo_tile": {}
+}
