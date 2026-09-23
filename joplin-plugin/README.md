@@ -35,7 +35,7 @@ The model, backend, note prefix and silence settings all come from `~/.config/he
 ## Requirements
 
 - Joplin desktop 3.7 or newer. Mobile isn't supported, because the plugin needs to start a local process.
-- A Hey Whisper release newer than 0.6.2 (the first with `hey-whisper --serve`), installed with pip or as the Flatpak.
+- Hey Whisper 0.7.0 or newer (the first release with `hey-whisper --serve`), installed with pip or as the Flatpak.
 
 ## Install
 
