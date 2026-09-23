@@ -9,6 +9,7 @@ __pycache__/
 .flatpak-builder/
 build-dir/
 repo/
+.flatpak-repo/
 *.flatpak
 
 # Local notes or audio scratch
