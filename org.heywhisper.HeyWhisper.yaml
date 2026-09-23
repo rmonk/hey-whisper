@@ -112,6 +112,9 @@ modules:
           - .flatpak-builder
           - build-dir
           - repo
+          - .flatpak-repo
+          # Joplin plugin (and its node_modules) isn't part of the app
+          - joplin-plugin
           - "*.flatpak"
           - .git
           - .pytest_cache
