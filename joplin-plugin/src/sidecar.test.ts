@@ -97,4 +97,51 @@ describe('Sidecar', () => {
 		expect(events).toEqual([{ event: 'error', message: 'Hey Whisper not found' }]);
 		expect(sidecar.running).toBe(false);
 	});
+
+	test('writes commands in call order even while the command is still resolving', async () => {
+		const events: SidecarEvent[] = [];
+		let calls = 0;
+		const sidecar = new Sidecar(async () => {
+			// The first resolution is slower than any later one would be
+			calls++;
+			await new Promise(resolve => setTimeout(resolve, calls === 1 ? 200 : 0));
+			return splitCommand(command);
+		}, e => events.push(e));
+
+		// A quick hold-release: start and stop issued back to back
+		void sidecar.send({ cmd: 'start', mode: 'toggle' });
+		void sidecar.send({ cmd: 'stop' });
+		await waitFor(events, e => e.event === 'transcript');
+
+		expect(calls).toBe(1);
+		expect(events.map(e => e.event)).toEqual(['starting', 'ready', 'recording', 'transcript']);
+		sidecar.stop();
+	});
+
+	test('includes output written just before an immediate exit', async () => {
+		// Like argparse rejecting an unknown --serve flag on an old install. The
+		// noise overfills the pipe so the last line tends to be read late; the
+		// report must still include it.
+		const script = 'for (let i = 0; i < 20000; i++) process.stderr.write(`noise ${i}\\n`);'
+			+ ' process.stderr.write(\'error: unrecognized arguments: --serve\\n\'); process.exit(2)';
+		const events: SidecarEvent[] = [];
+		const sidecar = new Sidecar(async () => [process.execPath, '-e', script], e => events.push(e));
+		await sidecar.send({ cmd: 'status' });
+		await waitFor(events, e => e.event === 'exited');
+		expect(events.find(e => e.event === 'exited')).toMatchObject({
+			code: 2,
+			unexpected: true,
+			stderr: expect.stringContaining('unrecognized arguments: --serve'),
+		});
+	});
+
+	test('survives writing to a process that has already exited', async () => {
+		const events: SidecarEvent[] = [];
+		const sidecar = new Sidecar(async () => [process.execPath, '-e', 'process.stdin.destroy(); setTimeout(() => {}, 300)'], e => events.push(e));
+		await sidecar.send({ cmd: 'status' });
+		await new Promise(resolve => setTimeout(resolve, 100));
+		for (let i = 0; i < 5; i++) await sidecar.send({ cmd: 'status', pad: 'x'.repeat(100000) });
+		await waitFor(events, e => e.event === 'exited');
+		expect(events.find(e => e.event === 'exited').code).toBe(0);
+	});
 });

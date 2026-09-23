@@ -45,6 +45,9 @@ const state: PanelState = {
 let panel: string;
 let sidecar: Sidecar;
 let recording = false;
+// A start command has been sent but the engine hasn't confirmed (or refused) it
+// yet. The engine may still be launching, so this can last several seconds.
+let startPending = false;
 let pendingTranscripts = 0;
 let rootId = '';
 
@@ -119,6 +122,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		break;
 	case 'recording':
 		recording = true;
+		startPending = false;
 		setMessage(evt.mode === 'silence' ? 'Listening… stops when you pause.' : 'Recording…');
 		break;
 	case 'level':
@@ -150,6 +154,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		break;
 	case 'cancelled':
 		recording = false;
+		startPending = false;
 		setMessage('Recording cancelled.');
 		break;
 	case 'status':
@@ -157,12 +162,14 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		break;
 	case 'error':
 		recording = false;
+		startPending = false;
 		pendingTranscripts = 0;
 		if (state.status === 'starting') state.status = 'idle';
 		await notifyError(evt.message);
 		return;
 	case 'exited':
 		recording = false;
+		startPending = false;
 		pendingTranscripts = 0;
 		state.status = 'idle';
 		if (evt.unexpected) {
@@ -180,17 +187,20 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 }
 
 async function startRecording(mode: Mode) {
-	if (recording || !(await requireRoot())) return;
+	if (recording || startPending || !(await requireRoot())) return;
+	startPending = true;
 	// Hold mode is a manual stop, same as toggle, as far as the sidecar is concerned
 	await sidecar.send({ cmd: 'start', mode: mode === 'silence' ? 'silence' : 'toggle' });
 }
 
 async function stopRecording() {
-	if (recording) await sidecar.send({ cmd: 'stop' });
+	// Also stop a start still in flight (e.g. hold released while the engine
+	// launches). Sidecar.send keeps order, and the engine ignores a stop when idle.
+	if (recording || startPending) await sidecar.send({ cmd: 'stop' });
 }
 
 async function toggleRecording() {
-	if (recording) await stopRecording();
+	if (recording || startPending) await stopRecording();
 	else await startRecording(state.mode);
 }
 
@@ -306,6 +316,7 @@ joplin.plugins.register({
 			if (event.keys.includes(SETTING_MODE)) state.mode = await joplin.settings.value(SETTING_MODE);
 			if (event.keys.includes(SETTING_COMMAND)) {
 				recording = false;
+				startPending = false;
 				pendingTranscripts = 0;
 				sidecar.restart();
 			}
