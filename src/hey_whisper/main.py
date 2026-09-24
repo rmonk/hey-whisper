@@ -84,6 +84,24 @@ def parse_args(argv=None):
         action="store_true",
         help="Run as a JSON-lines sidecar on stdin/stdout (used by the Joplin plugin)",
     )
+    parser.add_argument(
+        "--serve-socket",
+        dest="serve_socket",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="Run the engine in the background on a Unix socket (default: ~/.local/state/hey-whisper/engine.sock), "
+        "for apps that can't start it themselves, such as Joplin installed as a Flatpak",
+    )
+    parser.add_argument(
+        "--unload-after",
+        dest="unload_after",
+        type=float,
+        default=15,
+        metavar="MINUTES",
+        help="With --serve-socket: free the speech model after this many idle minutes (0 keeps it loaded; default: 15)",
+    )
     return parser.parse_args(argv)
 
 
@@ -104,6 +122,10 @@ def main(argv=None):
     if args.serve_mode:
         from hey_whisper.serve import run_serve
         return run_serve(config)
+
+    if args.serve_socket is not None:
+        from hey_whisper.serve import run_serve_socket
+        return run_serve_socket(config, Path(args.serve_socket) if args.serve_socket else None, unload_after=args.unload_after * 60)
 
     # If --cli explicitly passed, or headless environment (no DISPLAY / WAYLAND_DISPLAY)
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
