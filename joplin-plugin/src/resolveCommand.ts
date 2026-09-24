@@ -22,7 +22,7 @@ const JOPLIN_FLATPAK_ID = 'net.cozic.joplin_desktop';
 const SOCKET_PROBE_MS = 2000;
 
 export const HOST_ACCESS_HINT = 'Joplin is a Flatpak, so it cannot start Hey Whisper itself. '
-	+ 'Open Hey Whisper (0.7.0 or newer) and turn on Settings > Keep the engine running for Joplin. '
+	+ 'Open Hey Whisper (0.7.1 or newer) and turn on Settings > Keep the engine running for Joplin. '
 	+ `Or let Joplin start it: run \`flatpak override --user --talk-name=org.freedesktop.Flatpak ${JOPLIN_FLATPAK_ID}\` and restart Joplin.`;
 
 // Where `hey-whisper --serve-socket` listens by default. Built from the home
