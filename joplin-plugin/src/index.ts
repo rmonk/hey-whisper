@@ -1,6 +1,6 @@
 import joplin from 'api';
 import { MenuItemLocation, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
-import { Sidecar, SidecarEvent, splitCommand } from './sidecar';
+import { Sidecar, SidecarEvent, SidecarTarget, splitCommand } from './sidecar';
 import { resolveCommand } from './resolveCommand';
 import { appendEntry, getFolder, resolveWeekNote } from './notebooks';
 import { localDay } from './weekly';
@@ -95,10 +95,11 @@ async function loadRoot() {
 	state.rootTitle = folder ? folder.title : '';
 }
 
-// An explicit command in settings wins; otherwise find an installed Hey Whisper.
-async function sidecarArgv(): Promise<string[]> {
+// An explicit command in settings wins; otherwise use a running engine or
+// find an installed Hey Whisper.
+async function sidecarTarget(): Promise<SidecarTarget> {
 	const configured = ((await joplin.settings.value(SETTING_COMMAND)) || '').trim();
-	if (configured) return splitCommand(configured);
+	if (configured) return { argv: splitCommand(configured) };
 
 	const resolved = await resolveCommand();
 	if (!resolved) {
@@ -107,7 +108,7 @@ async function sidecarArgv(): Promise<string[]> {
 			+ 'Install it, or set the command in Tools > Options > Hey Whisper.',
 		);
 	}
-	return resolved.argv;
+	return 'socket' in resolved ? { socket: resolved.socket } : { argv: resolved.argv };
 }
 
 async function requireRoot(): Promise<boolean> {
@@ -198,6 +199,10 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		pendingTranscripts = 0;
 		state.status = 'idle';
 		if (evt.unexpected) {
+			if (evt.socket) {
+				await notifyError('Lost the connection to the Hey Whisper engine. It will reconnect the next time you record.');
+				return;
+			}
 			if (/unrecognized arguments: --serve/.test(evt.stderr || '')) {
 				await notifyError(`The installed Hey Whisper (${state.command}) is too old for this plugin. Update it to a release with --serve support.`);
 				return;
@@ -318,7 +323,8 @@ joplin.plugins.register({
 				type: SettingItemType.String,
 				value: '',
 				label: 'Hey Whisper command',
-				description: 'Leave empty to detect it automatically: ~/.local/bin/hey-whisper, then hey-whisper on PATH, then the Hey Whisper Flatpak. '
+				description: 'Leave empty to detect it automatically: a Hey Whisper engine already running in the background, '
+					+ 'then ~/.local/bin/hey-whisper, then hey-whisper on PATH, then the Hey Whisper Flatpak. '
 					+ 'Or set a command that starts the engine, e.g. /path/to/hey-whisper --serve',
 			},
 			[SETTING_ROOT]: {
@@ -340,7 +346,7 @@ joplin.plugins.register({
 		state.mode = await joplin.settings.value(SETTING_MODE);
 		await loadRoot();
 
-		sidecar = new Sidecar(sidecarArgv, evt => { void handleSidecarEvent(evt); });
+		sidecar = new Sidecar(sidecarTarget, evt => { void handleSidecarEvent(evt); });
 
 		await joplin.settings.onChange(async event => {
 			if (event.keys.includes(SETTING_MODE)) state.mode = await joplin.settings.value(SETTING_MODE);
