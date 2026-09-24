@@ -1,5 +1,6 @@
 """Transcription engine supporting Vulkan GPU acceleration (whisper.cpp) and faster-whisper."""
 
+import gc
 import os
 import shutil
 import subprocess
@@ -454,6 +455,17 @@ class Transcriber:
                 self.active_backend = "faster-whisper"
         else:
             self.active_backend = self.backend
+
+    @property
+    def is_loaded(self) -> bool:
+        """Whether a model is held in memory (the Vulkan backend loads one per call)."""
+        return self._faster_whisper_model is not None or self._nemo_model is not None
+
+    def unload(self) -> None:
+        """Free the loaded model; the next transcription loads it again."""
+        self._faster_whisper_model = None
+        self._nemo_model = None
+        gc.collect()
 
     @property
     def is_vulkan(self) -> bool:
