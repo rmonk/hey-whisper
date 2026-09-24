@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -31,7 +32,7 @@ from PyQt6.QtWidgets import (
     QApplication,
 )
 
-from hey_whisper import __version__
+from hey_whisper import __version__, engine_service
 from hey_whisper.config import AppConfig, save_config
 from hey_whisper.storage import format_entry_line, DEFAULT_NOTE_PREFIX
 from hey_whisper.gui.theme import ThemeColors
@@ -121,6 +122,29 @@ class VulkanProbeWorker(QThread):
         except Exception as e:
             status = VulkanStatus(whisper_cli_found=False, detail=f"Vulkan check failed: {e}")
         self.finished.emit(status)
+
+
+class EngineServiceWorker(QThread):
+    """Turns the background engine for Joplin on or off. The portal may be
+    waiting on the user, so this must not block the UI."""
+
+    finished = pyqtSignal(bool)  # the state that was applied
+    error = pyqtSignal(str)
+
+    def __init__(self, enable: bool):
+        super().__init__()
+        self.enable = enable
+
+    def run(self):
+        try:
+            if self.enable:
+                engine_service.enable()
+            else:
+                engine_service.disable()
+        except Exception as e:
+            self.error.emit(str(e))
+            return
+        self.finished.emit(self.enable)
 
 
 # Keeps a live Python reference to any background worker QThread whose owning
@@ -423,6 +447,29 @@ class SettingsDialog(QDialog):
         self._vulkan_probe_worker: Optional[VulkanProbeWorker] = None
         self._check_vulkan_status()
 
+        # 4. Background engine for Joplin
+        joplin_group = QGroupBox("Joplin")
+        joplin_layout = QVBoxLayout(joplin_group)
+        joplin_layout.setSpacing(6)
+
+        self.engine_service_check = QCheckBox("Keep the engine running for Joplin")
+        self.engine_service_check.setToolTip(
+            "Runs the speech engine in the background, now and at every login, so the Hey Whisper "
+            "Joplin plugin can use it. Needed when Joplin is installed as a Flatpak. "
+            "The model is freed after 15 idle minutes. Applies immediately."
+        )
+        self.engine_service_check.setChecked(engine_service.autostart_enabled())
+        self.engine_service_check.toggled.connect(self._on_engine_service_toggled)
+        joplin_layout.addWidget(self.engine_service_check)
+
+        self.engine_service_label = QLabel("")
+        self.engine_service_label.setWordWrap(True)
+        joplin_layout.addWidget(self.engine_service_label)
+        main_layout.addWidget(joplin_group)
+
+        self._engine_worker: Optional[EngineServiceWorker] = None
+        self._update_engine_service_label()
+
         main_layout.addStretch()
         return page
 
@@ -620,6 +667,36 @@ class SettingsDialog(QDialog):
             device_lines.append("System devices: " + ", ".join(status.system_devices))
         self.vulkan_device_label.setText("\n".join(device_lines))
 
+    def _update_engine_service_label(self, text: Optional[str] = None):
+        if text is None:
+            text = "Engine: running" if engine_service.engine_running() else "Engine: not running"
+        self.engine_service_label.setText(text)
+
+    def _on_engine_service_toggled(self, checked: bool):
+        if self._engine_worker is not None:
+            return
+        self.engine_service_check.setEnabled(False)
+        self._update_engine_service_label("Starting the engine…" if checked else "Stopping the engine…")
+        worker = EngineServiceWorker(checked)
+        worker.finished.connect(self._on_engine_service_done)
+        worker.error.connect(self._on_engine_service_error)
+        self._engine_worker = worker
+        worker.start()
+
+    def _on_engine_service_done(self, _enabled: bool):
+        self._engine_worker = None
+        self.engine_service_check.setEnabled(True)
+        self._update_engine_service_label()
+
+    def _on_engine_service_error(self, message: str):
+        self._engine_worker = None
+        # Show what actually took effect, without re-triggering the toggle
+        self.engine_service_check.blockSignals(True)
+        self.engine_service_check.setChecked(engine_service.autostart_enabled())
+        self.engine_service_check.blockSignals(False)
+        self.engine_service_check.setEnabled(True)
+        self._update_engine_service_label(f"Engine: {message}")
+
     def _cleanup_workers(self):
         """Detach any in-flight background workers before the dialog closes.
 
@@ -634,7 +711,7 @@ class SettingsDialog(QDialog):
         OS thread is still executing (e.g. about to emit a signal) can crash
         the process too.
         """
-        for attr in ("_download_worker", "_vulkan_probe_worker"):
+        for attr in ("_download_worker", "_vulkan_probe_worker", "_engine_worker"):
             worker = getattr(self, attr, None)
             if worker is None:
                 continue
