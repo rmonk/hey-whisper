@@ -348,3 +348,68 @@ def test_settings_dialog_unified_model_list(qapp, tmp_path, monkeypatch):
 
 
 
+
+
+def _wait_for(qapp, condition, timeout=5.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+def test_settings_engine_service_checkbox(qapp, tmp_path, monkeypatch):
+    from hey_whisper import engine_service
+    from hey_whisper.gui.settings_dialog import SettingsDialog
+
+    calls = []
+    state = {"enabled": False}
+    monkeypatch.setattr(engine_service, "autostart_enabled", lambda: state["enabled"])
+    monkeypatch.setattr(engine_service, "engine_running", lambda: state["enabled"])
+
+    def enable():
+        calls.append("enable")
+        state["enabled"] = True
+
+    def disable():
+        calls.append("disable")
+        state["enabled"] = False
+
+    monkeypatch.setattr(engine_service, "enable", enable)
+    monkeypatch.setattr(engine_service, "disable", disable)
+
+    dlg = SettingsDialog(config=AppConfig(notes_dir=tmp_path), current_colors=get_theme_colors("light")[1])
+    check = dlg.engine_service_check
+    assert not check.isChecked()
+    assert dlg.engine_service_label.text() == "Engine: not running"
+
+    check.setChecked(True)
+    _wait_for(qapp, lambda: dlg._engine_worker is None and check.isEnabled())
+    assert calls == ["enable"]
+    assert dlg.engine_service_label.text() == "Engine: running"
+
+    check.setChecked(False)
+    _wait_for(qapp, lambda: dlg._engine_worker is None and check.isEnabled())
+    assert calls == ["enable", "disable"]
+    dlg.reject()
+
+
+def test_settings_engine_service_failure_reverts_checkbox(qapp, tmp_path, monkeypatch):
+    from hey_whisper import engine_service
+    from hey_whisper.gui.settings_dialog import SettingsDialog
+
+    monkeypatch.setattr(engine_service, "autostart_enabled", lambda: False)
+    monkeypatch.setattr(engine_service, "engine_running", lambda: False)
+
+    def refuse():
+        raise RuntimeError("Running in the background was not allowed.")
+
+    monkeypatch.setattr(engine_service, "enable", refuse)
+
+    dlg = SettingsDialog(config=AppConfig(notes_dir=tmp_path), current_colors=get_theme_colors("light")[1])
+    dlg.engine_service_check.setChecked(True)
+    _wait_for(qapp, lambda: dlg._engine_worker is None and dlg.engine_service_check.isEnabled())
+    assert not dlg.engine_service_check.isChecked()
+    assert "not allowed" in dlg.engine_service_label.text()
+    dlg.reject()
