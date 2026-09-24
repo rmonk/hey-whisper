@@ -1,4 +1,4 @@
-import { FLATPAK_APP_ID, ResolveDeps, resolveCommand } from './resolveCommand';
+import { FLATPAK_APP_ID, HOST_ACCESS_HINT, ResolveDeps, resolveCommand } from './resolveCommand';
 
 const LOCAL = '/home/me/.local/bin/hey-whisper';
 const FLATPAK_RUN = ['flatpak', 'run', '--command=hey-whisper', FLATPAK_APP_ID, '--serve'];
@@ -42,23 +42,30 @@ describe('resolveCommand on the host', () => {
 
 describe('resolveCommand when Joplin is a Flatpak', () => {
 	const host = ['flatpak-spawn', '--host'];
+	const hostOk = [...host, 'true'];
 
 	test('checks ~/.local/bin on the host', async () => {
-		const d = deps({ sandboxed: true, executables: [LOCAL], succeeding: [[...host, 'test', '-x', LOCAL]] });
+		const d = deps({ sandboxed: true, executables: [LOCAL], succeeding: [hostOk, [...host, 'test', '-x', LOCAL]] });
 		expect(await resolveCommand(d)).toEqual({ argv: [...host, LOCAL, '--serve'], source: 'local' });
 	});
 
 	test('falls back to the host PATH', async () => {
-		const d = deps({ sandboxed: true, succeeding: [[...host, 'sh', '-c', 'command -v hey-whisper']] });
+		const d = deps({ sandboxed: true, succeeding: [hostOk, [...host, 'sh', '-c', 'command -v hey-whisper']] });
 		expect(await resolveCommand(d)).toEqual({ argv: [...host, 'hey-whisper', '--serve'], source: 'path' });
 	});
 
 	test('falls back to the host Flatpak', async () => {
-		const d = deps({ sandboxed: true, succeeding: [[...host, 'flatpak', 'info', FLATPAK_APP_ID]] });
+		const d = deps({ sandboxed: true, succeeding: [hostOk, [...host, 'flatpak', 'info', FLATPAK_APP_ID]] });
 		expect(await resolveCommand(d)).toEqual({ argv: [...host, ...FLATPAK_RUN], source: 'flatpak' });
 	});
 
-	test('returns null when the host has nothing (or flatpak-spawn is not permitted)', async () => {
-		expect(await resolveCommand(deps({ sandboxed: true }))).toBeNull();
+	test('returns null when the host has nothing', async () => {
+		expect(await resolveCommand(deps({ sandboxed: true, succeeding: [hostOk] }))).toBeNull();
+	});
+
+	test('explains the missing permission when flatpak-spawn --host is blocked', async () => {
+		const d = deps({ sandboxed: true, succeeding: [[...host, 'flatpak', 'info', FLATPAK_APP_ID]] });
+		await expect(resolveCommand(d)).rejects.toThrow(HOST_ACCESS_HINT);
+		expect(d.calls).toEqual([hostOk]);
 	});
 });
