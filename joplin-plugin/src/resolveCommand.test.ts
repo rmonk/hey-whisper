@@ -1,9 +1,10 @@
-import { FLATPAK_APP_ID, HOST_ACCESS_HINT, ResolveDeps, resolveCommand } from './resolveCommand';
+import { FLATPAK_APP_ID, HOST_ACCESS_HINT, ResolveDeps, engineSocketPath, resolveCommand } from './resolveCommand';
 
 const LOCAL = '/home/me/.local/bin/hey-whisper';
+const SOCKET = '/home/me/.local/state/hey-whisper/engine.sock';
 const FLATPAK_RUN = ['flatpak', 'run', '--command=hey-whisper', FLATPAK_APP_ID, '--serve'];
 
-function deps(opts: { executables?: string[]; succeeding?: string[][]; sandboxed?: boolean }): ResolveDeps & { calls: string[][] } {
+function deps(opts: { executables?: string[]; succeeding?: string[][]; sandboxed?: boolean; engineRunning?: boolean }): ResolveDeps & { calls: string[][] } {
 	const calls: string[][] = [];
 	return {
 		calls,
@@ -15,8 +16,26 @@ function deps(opts: { executables?: string[]; succeeding?: string[][]; sandboxed
 			calls.push(argv);
 			return (opts.succeeding || []).some(ok => ok.join(' ') === argv.join(' '));
 		},
+		listening: async path => !!opts.engineRunning && path === SOCKET,
 	};
 }
+
+test('engineSocketPath', () => {
+	expect(engineSocketPath('/home/me')).toBe(SOCKET);
+});
+
+describe('resolveCommand with a running engine', () => {
+	test('prefers the socket over anything installed', async () => {
+		const d = deps({ engineRunning: true, executables: [LOCAL] });
+		expect(await resolveCommand(d)).toEqual({ socket: SOCKET, source: 'socket' });
+	});
+
+	test('uses the socket from a Flatpak Joplin without host access', async () => {
+		const d = deps({ engineRunning: true, sandboxed: true });
+		expect(await resolveCommand(d)).toEqual({ socket: SOCKET, source: 'socket' });
+		expect(d.calls).toEqual([]);
+	});
+});
 
 describe('resolveCommand on the host', () => {
 	test('prefers ~/.local/bin', async () => {

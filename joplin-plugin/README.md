@@ -30,12 +30,15 @@ A week that spans two months is filed under the month of its Monday.
 
 Joplin plugins run in JavaScript, so the plugin starts `hey-whisper --serve` in the background. That process records from the microphone and transcribes, and the two talk to each other in JSON lines over stdin/stdout. The plugin writes the notes through the Joplin data API. The engine starts on first use and keeps running, so the model loads only once per Joplin session.
 
+If a Hey Whisper engine is already running in the background (`hey-whisper --serve-socket`, which the app's **Keep the engine running for Joplin** setting starts at login), the plugin connects to its socket at `~/.local/state/hey-whisper/engine.sock` instead. The protocol is the same. This is how Joplin installed as a Flatpak uses Hey Whisper without extra permissions. When Joplin closes, it disconnects and the engine keeps running. After 15 idle minutes the engine frees the model, and it loads it again the next time you record.
+
 The model, backend, note prefix and silence settings all come from `~/.config/hey-whisper.conf`, the same file the app uses. Change them in the app's Settings dialog or in that file. Then restart the engine by changing the command setting, or restart Joplin.
 
 ## Requirements
 
 - Joplin desktop 3.7 or newer. Mobile isn't supported, because the plugin needs to start a local process.
 - Hey Whisper 0.7.0 or newer (the first release with `hey-whisper --serve`), installed with pip or as the Flatpak.
+- If Joplin is installed as a Flatpak: Hey Whisper 0.7.1 or newer, for the **Keep the engine running for Joplin** setting (or grant Joplin the `flatpak override` described under Install).
 
 ## Install
 
@@ -47,11 +50,13 @@ The model, backend, note prefix and silence settings all come from `~/.config/he
    ```
 2. In Joplin, go to **Tools → Options → Plugins → ⚙ → Install from file** and pick the `.jpl`.
 3. The plugin finds Hey Whisper on its own. It checks, in order:
-   1. `~/.local/bin/hey-whisper` (pip `--user` / pipx)
-   2. `hey-whisper` on PATH
-   3. the Hey Whisper Flatpak (`org.heywhisper.HeyWhisper`)
+   1. an engine already running in the background (see [How it works](#how-it-works))
+   2. `~/.local/bin/hey-whisper` (pip `--user` / pipx)
+   3. `hey-whisper` on PATH
+   4. the Hey Whisper Flatpak (`org.heywhisper.HeyWhisper`)
 
-   If Joplin itself is a Flatpak, it runs these checks on the host through `flatpak-spawn --host`. Grant that once with:
+   **If Joplin itself is a Flatpak**, it can't start programs outside its sandbox. Open Hey Whisper and turn on **Settings → Keep the engine running for Joplin**. That starts the engine now and at every login, and Joplin connects to it.
+   Or let Joplin run checks 2–4 on the host through `flatpak-spawn --host` by granting it once:
    `flatpak override --user --talk-name=org.freedesktop.Flatpak net.cozic.joplin_desktop`
 
    To use a specific install, set **Tools → Options → Hey Whisper → Hey Whisper command**, e.g. `/path/to/venv/bin/hey-whisper --serve`. Hover over the engine name in the panel to see which command is in use.

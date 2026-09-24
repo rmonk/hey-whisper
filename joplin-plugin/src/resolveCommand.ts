@@ -1,13 +1,16 @@
-// Works out how to start `hey-whisper --serve` when no command is configured:
-//   1. ~/.local/bin/hey-whisper (pip --user / pipx)
-//   2. hey-whisper anywhere on PATH
-//   3. the Hey Whisper Flatpak
-// When Joplin itself runs as a Flatpak, the checks and the final command go
-// through `flatpak-spawn --host`, since the host's binaries aren't visible
-// from inside Joplin's sandbox.
+// Works out how to reach the Hey Whisper engine when no command is configured:
+//   1. an engine already running with `hey-whisper --serve-socket`
+//   2. ~/.local/bin/hey-whisper (pip --user / pipx)
+//   3. hey-whisper anywhere on PATH
+//   4. the Hey Whisper Flatpak
+// 2-4 start `hey-whisper --serve`. When Joplin itself runs as a Flatpak, those
+// checks and the final command go through `flatpak-spawn --host`, since the
+// host's binaries aren't visible from inside Joplin's sandbox. The socket
+// needs no such permission, so it's the only way that works out of the box.
 
 import { execFile } from 'child_process';
 import { accessSync, constants, existsSync } from 'fs';
+import { connect } from 'net';
 import { homedir } from 'os';
 import { delimiter, join } from 'path';
 
@@ -16,9 +19,17 @@ const SERVE_ARGS = ['--serve'];
 const HOST_PREFIX = ['flatpak-spawn', '--host'];
 const JOPLIN_FLATPAK_ID = 'net.cozic.joplin_desktop';
 
-export const HOST_ACCESS_HINT = 'Joplin is a Flatpak and is not allowed to run commands on the host, so it cannot find Hey Whisper. '
-	+ `Run \`flatpak override --user --talk-name=org.freedesktop.Flatpak ${JOPLIN_FLATPAK_ID}\` and restart Joplin, `
-	+ 'or set the command in Tools > Options > Hey Whisper.';
+const SOCKET_PROBE_MS = 2000;
+
+export const HOST_ACCESS_HINT = 'Joplin is a Flatpak, so it cannot start Hey Whisper itself. '
+	+ 'Open Hey Whisper (0.7.1 or newer) and turn on Settings > Keep the engine running for Joplin. '
+	+ `Or let Joplin start it: run \`flatpak override --user --talk-name=org.freedesktop.Flatpak ${JOPLIN_FLATPAK_ID}\` and restart Joplin.`;
+
+// Where `hey-whisper --serve-socket` listens by default. Built from the home
+// directory rather than $XDG_STATE_HOME, which a Flatpak points elsewhere.
+export function engineSocketPath(home: string): string {
+	return join(home, '.local', 'state', 'hey-whisper', 'engine.sock');
+}
 
 export interface ResolveDeps {
 	home: string;
@@ -27,11 +38,25 @@ export interface ResolveDeps {
 	isExecutable(file: string): boolean;
 	// Runs argv to completion; resolves true when it exits with status 0.
 	succeeds(argv: string[]): Promise<boolean>;
+	// Resolves true when something accepts a connection on the Unix socket.
+	listening(socketPath: string): Promise<boolean>;
 }
 
-export interface ResolvedCommand {
-	argv: string[];
-	source: 'local' | 'path' | 'flatpak';
+export type ResolvedCommand =
+	| { argv: string[]; source: 'local' | 'path' | 'flatpak' }
+	| { socket: string; source: 'socket' };
+
+function listening(socketPath: string): Promise<boolean> {
+	return new Promise(resolve => {
+		const socket = connect(socketPath);
+		const done = (ok: boolean) => {
+			socket.destroy();
+			resolve(ok);
+		};
+		socket.setTimeout(SOCKET_PROBE_MS, () => done(false));
+		socket.on('connect', () => done(true));
+		socket.on('error', () => done(false));
+	});
 }
 
 function isExecutable(file: string): boolean {
@@ -56,10 +81,14 @@ export function defaultDeps(): ResolveDeps {
 		sandboxed: existsSync('/.flatpak-info'),
 		isExecutable,
 		succeeds,
+		listening,
 	};
 }
 
 export async function resolveCommand(deps: ResolveDeps = defaultDeps()): Promise<ResolvedCommand | null> {
+	const socket = engineSocketPath(deps.home);
+	if (await deps.listening(socket)) return { socket, source: 'socket' };
+
 	const localBin = join(deps.home, '.local', 'bin', 'hey-whisper');
 
 	if (deps.sandboxed) {
