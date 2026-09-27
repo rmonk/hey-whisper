@@ -60,11 +60,16 @@ let recording = false;
 let startPending = false;
 let pendingTranscripts = 0;
 let rootId = '';
-// Note ID each recording saves to ('' = weekly notes). Taken when recording
-// starts and queued when it's handed off for transcription, so transcripts
-// land in the note that was open when they were spoken.
-let recordingTarget = '';
-let pendingTargets: string[] = [];
+// Where each recording saves to. Taken when recording starts and queued when
+// it's handed off for transcription, so transcripts land in the note (or
+// weekly notebook) that was chosen when they were spoken.
+type SaveTarget = { noteId: string } | { rootId: string; rootTitle: string };
+let recordingTarget: SaveTarget | null = null;
+let pendingTargets: SaveTarget[] = [];
+// Looking up where to save; a start command hasn't been sent yet.
+let choosingTarget = false;
+// A stop or cancel arrived while choosing: don't send the start at all.
+let startAborted = false;
 
 function refreshStatus() {
 	if (recording) state.status = 'recording';
@@ -134,26 +139,24 @@ async function requireRoot(): Promise<boolean> {
 // Pick where the next recording will be saved; false if there's nowhere to save it.
 async function takeTarget(): Promise<boolean> {
 	if (state.target === 'weekly') {
-		recordingTarget = '';
-		return await requireRoot();
+		if (!(await requireRoot())) return false;
+		recordingTarget = { rootId, rootTitle: state.rootTitle };
+		return true;
 	}
 	const note = await joplin.workspace.selectedNote();
 	if (!note) {
 		await joplin.views.dialogs.showMessageBox('Open a note to dictate into first.');
 		return false;
 	}
-	recordingTarget = note.id;
+	recordingTarget = { noteId: note.id };
 	return true;
 }
 
-async function saveTranscript(noteId: string, day: string, entryLine: string): Promise<string> {
-	if (noteId) {
-		const note = await appendToNote(noteId, day, entryLine);
-		return note.title;
-	}
-	if (!rootId) throw new Error('No notebook chosen for voice notes.');
-	const week = await appendEntry(rootId, day, entryLine);
-	return `${state.rootTitle} › ${week.title}`;
+async function saveTranscript(target: SaveTarget | null, day: string, entryLine: string): Promise<string> {
+	if (!target) throw new Error('No note or notebook chosen for voice notes.');
+	if ('noteId' in target) return (await appendToNote(target.noteId, day, entryLine)).title;
+	const week = await appendEntry(target.rootId, day, entryLine);
+	return `${target.rootTitle} › ${week.title}`;
 }
 
 async function handleSidecarEvent(evt: SidecarEvent) {
@@ -195,8 +198,8 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 	case 'transcript':
 		pendingTranscripts = Math.max(0, pendingTranscripts - 1);
 		try {
-			const noteId = pendingTargets.length ? pendingTargets.shift() : recordingTarget;
-			const where = await saveTranscript(noteId, evt.day, evt.entry_line);
+			const target = pendingTargets.length ? pendingTargets.shift() : recordingTarget;
+			const where = await saveTranscript(target, evt.day, evt.entry_line);
 			state.lastEntry = evt.entry_line;
 			state.lastNote = where;
 			setMessage(`Saved to ${where}`);
@@ -256,7 +259,16 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 }
 
 async function startRecording(mode: Mode) {
-	if (recording || startPending || !(await takeTarget())) return;
+	if (recording || startPending || choosingTarget) return;
+	choosingTarget = true;
+	startAborted = false;
+	let ok: boolean;
+	try {
+		ok = await takeTarget();
+	} finally {
+		choosingTarget = false;
+	}
+	if (!ok || startAborted || recording || startPending) return;
 	startPending = true;
 	// Hold mode is a manual stop, same as toggle, as far as the sidecar is concerned
 	await sidecar.send({ cmd: 'start', mode: mode === 'silence' ? 'silence' : 'toggle' });
@@ -265,11 +277,13 @@ async function startRecording(mode: Mode) {
 async function stopRecording() {
 	// Also stop a start still in flight (e.g. hold released while the engine
 	// launches). Sidecar.send keeps order, and the engine ignores a stop when idle.
-	if (recording || startPending) await sidecar.send({ cmd: 'stop' });
+	if (choosingTarget) startAborted = true;
+	else if (recording || startPending) await sidecar.send({ cmd: 'stop' });
 }
 
 async function cancelRecording() {
-	if (recording || startPending) await sidecar.send({ cmd: 'cancel' });
+	if (choosingTarget) startAborted = true;
+	else if (recording || startPending) await sidecar.send({ cmd: 'cancel' });
 }
 
 async function toggleRecording() {
