@@ -80,6 +80,17 @@ def test_multiple_notes_same_day(tmp_path: Path):
     assert content.count("- [2026-09-09") == 2
 
 
+def test_day_section_ends_at_any_top_level_heading(tmp_path: Path):
+    notes_dir = tmp_path / "notes"
+    dt = datetime(2026, 9, 9, 10, 0, tzinfo=timezone.utc)
+    f, _ = append_note(notes_dir, "a", dt, prefix_template="none")
+    f.write_text("# 2026-09-09\n\n- a\n## Detail\n\n- x\n\n# Other\n\ntext\n")
+
+    append_note(notes_dir, "z", dt, prefix_template="none")
+
+    assert f.read_text() == "# 2026-09-09\n\n- a\n## Detail\n\n- x\n- z\n\n# Other\n\ntext\n"
+
+
 def test_group_files_by_year_month(tmp_path: Path):
     notes_dir = tmp_path / "notes"
     d1 = datetime(2026, 8, 15, 10, 0, tzinfo=timezone.utc)

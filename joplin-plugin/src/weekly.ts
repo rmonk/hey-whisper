@@ -66,7 +66,7 @@ function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Insert `entryLine` under the "# day" header of a weekly note body. Ported
+// Insert `entryLine` under the "# day" header of a note body. Ported
 // from the section insertion in storage.py:append_note so both produce
 // identical markdown.
 export function insertEntry(body: string, day: string, entryLine: string): string {
@@ -83,10 +83,10 @@ export function insertEntry(body: string, day: string, entryLine: string): strin
 		return `${body}${separator}${dayHeader}\n\n${entryLine}\n`;
 	}
 
-	// Day header exists: append under it, before the next day header (if any)
+	// Day header exists: append under it, before the next top-level heading (if any)
 	const match = headerMatches[headerMatches.length - 1];
 	const startIdx = match.index + match[0].length;
-	const nextHeader = /^#\s+\d{4}-\d{2}-\d{2}/m.exec(body.slice(startIdx));
+	const nextHeader = /^#\s/m.exec(body.slice(startIdx));
 	if (nextHeader) {
 		const insertPos = startIdx + nextHeader.index;
 		const section = body.slice(startIdx, insertPos).trimEnd();

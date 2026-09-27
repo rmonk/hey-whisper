@@ -81,13 +81,27 @@ export async function resolveWeekNote(rootId: string, day: string, create: boole
 // and overwrite each other.
 let queue: Promise<unknown> = Promise.resolve();
 
+function serialized<T>(write: () => Promise<T>): Promise<T> {
+	const task = queue.then(write);
+	queue = task.catch(() => undefined);
+	return task;
+}
+
 export function appendEntry(rootId: string, day: string, entryLine: string): Promise<WeekNote> {
-	const task = queue.then(async () => {
+	return serialized(async () => {
 		const week = await resolveWeekNote(rootId, day, true);
 		const note = await joplin.data.get(['notes', week.id], { fields: ['id', 'body'] });
 		await joplin.data.put(['notes', week.id], null, { body: insertEntry(note.body || '', day, entryLine) });
 		return week;
 	});
-	queue = task.catch(() => undefined);
-	return task;
+}
+
+// Append to an existing note under its "# day" header, adding the header at
+// the bottom if the note doesn't have one yet.
+export function appendToNote(noteId: string, day: string, entryLine: string): Promise<Note> {
+	return serialized(async () => {
+		const note = await joplin.data.get(['notes', noteId], { fields: ['id', 'title', 'body'] });
+		await joplin.data.put(['notes', noteId], null, { body: insertEntry(note.body || '', day, entryLine) });
+		return { id: note.id, title: note.title };
+	});
 }

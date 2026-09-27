@@ -2,12 +2,13 @@ import joplin from 'api';
 import { MenuItemLocation, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
 import { Sidecar, SidecarEvent, SidecarTarget, splitCommand } from './sidecar';
 import { resolveCommand } from './resolveCommand';
-import { appendEntry, getFolder, resolveWeekNote } from './notebooks';
+import { appendEntry, appendToNote, getFolder, resolveWeekNote } from './notebooks';
 import { localDay } from './weekly';
 
 const SECTION = 'heyWhisper';
 const SETTING_ROOT = 'heyWhisper.rootFolderId';
 const SETTING_MODE = 'heyWhisper.mode';
+const SETTING_TARGET = 'heyWhisper.target';
 const SETTING_COMMAND = 'heyWhisper.sidecarCommand';
 const SETTING_PANEL_VISIBLE = 'heyWhisper.panelVisible';
 
@@ -17,12 +18,15 @@ const CANCEL_ACCELERATOR = 'CmdOrCtrl+Shift+Backspace';
 const MOD_KEY = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
 
 type Mode = 'hold' | 'toggle' | 'silence';
+// Where transcripts go: the note open when recording started, or weekly notes
+type Target = 'note' | 'weekly';
 
 // Everything the panel needs to render, pushed to it after every change.
 interface PanelState {
 	type: 'state';
 	status: 'idle' | 'starting' | 'recording' | 'transcribing';
 	mode: Mode;
+	target: Target;
 	backend: string;
 	model: string;
 	command: string;
@@ -37,6 +41,7 @@ const state: PanelState = {
 	type: 'state',
 	status: 'idle',
 	mode: 'hold',
+	target: 'note',
 	backend: '',
 	model: '',
 	command: '',
@@ -55,6 +60,16 @@ let recording = false;
 let startPending = false;
 let pendingTranscripts = 0;
 let rootId = '';
+// Where each recording saves to. Taken when recording starts and queued when
+// it's handed off for transcription, so transcripts land in the note (or
+// weekly notebook) that was chosen when they were spoken.
+type SaveTarget = { noteId: string } | { rootId: string; rootTitle: string };
+let recordingTarget: SaveTarget | null = null;
+let pendingTargets: SaveTarget[] = [];
+// Looking up where to save; a start command hasn't been sent yet.
+let choosingTarget = false;
+// A stop or cancel arrived while choosing: don't send the start at all.
+let startAborted = false;
 
 function refreshStatus() {
 	if (recording) state.status = 'recording';
@@ -121,6 +136,29 @@ async function requireRoot(): Promise<boolean> {
 	return false;
 }
 
+// Pick where the next recording will be saved; false if there's nowhere to save it.
+async function takeTarget(): Promise<boolean> {
+	if (state.target === 'weekly') {
+		if (!(await requireRoot())) return false;
+		recordingTarget = { rootId, rootTitle: state.rootTitle };
+		return true;
+	}
+	const note = await joplin.workspace.selectedNote();
+	if (!note) {
+		await joplin.views.dialogs.showMessageBox('Open a note to dictate into first.');
+		return false;
+	}
+	recordingTarget = { noteId: note.id };
+	return true;
+}
+
+async function saveTranscript(target: SaveTarget | null, day: string, entryLine: string): Promise<string> {
+	if (!target) throw new Error('No note or notebook chosen for voice notes.');
+	if ('noteId' in target) return (await appendToNote(target.noteId, day, entryLine)).title;
+	const week = await appendEntry(target.rootId, day, entryLine);
+	return `${target.rootTitle} › ${week.title}`;
+}
+
 async function handleSidecarEvent(evt: SidecarEvent) {
 	switch (evt.event) {
 	case 'starting':
@@ -153,18 +191,19 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 	case 'transcribing':
 		recording = false;
 		pendingTranscripts++;
+		pendingTargets.push(recordingTarget);
 		setMessage('Transcribing…');
 		void notify('Transcribing…');
 		break;
 	case 'transcript':
 		pendingTranscripts = Math.max(0, pendingTranscripts - 1);
 		try {
-			if (!rootId) throw new Error('No notebook chosen for voice notes.');
-			const week = await appendEntry(rootId, evt.day, evt.entry_line);
+			const target = pendingTargets.length ? pendingTargets.shift() : recordingTarget;
+			const where = await saveTranscript(target, evt.day, evt.entry_line);
 			state.lastEntry = evt.entry_line;
-			state.lastNote = week.title;
-			setMessage(`Saved to ${state.rootTitle} › ${week.title}`);
-			void notify(`Saved to ${state.rootTitle} › ${week.title}: ${truncate(evt.text, 80)}`, ToastType.Success, 5000);
+			state.lastNote = where;
+			setMessage(`Saved to ${where}`);
+			void notify(`Saved to ${where}: ${truncate(evt.text, 80)}`, ToastType.Success, 5000);
 		} catch (error) {
 			// Don't lose the words: surface them so they can be pasted manually
 			await notifyError(`Could not save note (${error.message}). Transcript: ${evt.text}`);
@@ -174,6 +213,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 	case 'empty':
 		recording = false;
 		pendingTranscripts = Math.max(0, pendingTranscripts - 1);
+		pendingTargets.shift();
 		setMessage(evt.reason || 'Nothing recorded.');
 		void notify(state.message);
 		break;
@@ -190,6 +230,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		recording = false;
 		startPending = false;
 		pendingTranscripts = 0;
+		pendingTargets = [];
 		if (state.status === 'starting') state.status = 'idle';
 		await notifyError(evt.message);
 		return;
@@ -197,6 +238,7 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 		recording = false;
 		startPending = false;
 		pendingTranscripts = 0;
+		pendingTargets = [];
 		state.status = 'idle';
 		if (evt.unexpected) {
 			if (evt.socket) {
@@ -217,7 +259,16 @@ async function handleSidecarEvent(evt: SidecarEvent) {
 }
 
 async function startRecording(mode: Mode) {
-	if (recording || startPending || !(await requireRoot())) return;
+	if (recording || startPending || choosingTarget) return;
+	choosingTarget = true;
+	startAborted = false;
+	let ok: boolean;
+	try {
+		ok = await takeTarget();
+	} finally {
+		choosingTarget = false;
+	}
+	if (!ok || startAborted || recording || startPending) return;
 	startPending = true;
 	// Hold mode is a manual stop, same as toggle, as far as the sidecar is concerned
 	await sidecar.send({ cmd: 'start', mode: mode === 'silence' ? 'silence' : 'toggle' });
@@ -226,11 +277,13 @@ async function startRecording(mode: Mode) {
 async function stopRecording() {
 	// Also stop a start still in flight (e.g. hold released while the engine
 	// launches). Sidecar.send keeps order, and the engine ignores a stop when idle.
-	if (recording || startPending) await sidecar.send({ cmd: 'stop' });
+	if (choosingTarget) startAborted = true;
+	else if (recording || startPending) await sidecar.send({ cmd: 'stop' });
 }
 
 async function cancelRecording() {
-	if (recording || startPending) await sidecar.send({ cmd: 'cancel' });
+	if (choosingTarget) startAborted = true;
+	else if (recording || startPending) await sidecar.send({ cmd: 'cancel' });
 }
 
 async function toggleRecording() {
@@ -317,6 +370,18 @@ joplin.plugins.register({
 				label: 'Recording mode',
 				description: 'The mic button and keyboard shortcut always toggle (in Silence mode recording also stops when you pause).',
 			},
+			[SETTING_TARGET]: {
+				section: SECTION,
+				public: true,
+				type: SettingItemType.String,
+				isEnum: true,
+				value: 'note',
+				options: {
+					note: 'The open note, under a # YYYY-MM-DD heading for the day',
+					weekly: 'Weekly notes in the voice notes notebook (Year › Month › week)',
+				},
+				label: 'Save voice notes to',
+			},
 			[SETTING_COMMAND]: {
 				section: SECTION,
 				public: true,
@@ -344,16 +409,19 @@ joplin.plugins.register({
 		});
 
 		state.mode = await joplin.settings.value(SETTING_MODE);
+		state.target = await joplin.settings.value(SETTING_TARGET);
 		await loadRoot();
 
 		sidecar = new Sidecar(sidecarTarget, evt => { void handleSidecarEvent(evt); });
 
 		await joplin.settings.onChange(async event => {
 			if (event.keys.includes(SETTING_MODE)) state.mode = await joplin.settings.value(SETTING_MODE);
+			if (event.keys.includes(SETTING_TARGET)) state.target = await joplin.settings.value(SETTING_TARGET);
 			if (event.keys.includes(SETTING_COMMAND)) {
 				recording = false;
 				startPending = false;
 				pendingTranscripts = 0;
+				pendingTargets = [];
 				sidecar.restart();
 			}
 			pushState();

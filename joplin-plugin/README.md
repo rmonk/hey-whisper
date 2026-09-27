@@ -1,8 +1,25 @@
 # Hey Whisper for Joplin
 
-A Joplin desktop plugin that dictates voice notes into weekly notes, using the same speech-to-text engine as the [Hey Whisper](../README.md) app (Vulkan `whisper.cpp`, `faster-whisper`, or NVIDIA Parakeet/Canary).
+A Joplin desktop plugin that dictates voice notes into your notes, using the same speech-to-text engine as the [Hey Whisper](../README.md) app (Vulkan `whisper.cpp`, `faster-whisper`, or NVIDIA Parakeet/Canary).
 
-Pick a notebook, and every transcript is appended to a note for the current week:
+By default each transcript goes into the note that's open when you start recording, under a top-level `# YYYY-MM-DD` heading for the day. If the note has no heading for today yet, it's added at the bottom:
+
+```markdown
+# Project Falcon
+
+Background notes…
+
+# 2026-09-27
+
+- [2026-09-27 10:02 EDT] Decided to ship the beta on Friday.
+- [2026-09-27 15:40 EDT] Follow up with QA about the flaky upload test.
+```
+
+An entry goes at the end of its day's section, before the next top-level (`# `) heading. `##` subheadings stay part of the day.
+
+### Weekly notes
+
+Set **Tools → Options → Hey Whisper → Save voice notes to** to **Weekly notes** and pick a notebook, and every transcript is appended to a note for the current week instead:
 
 ```
 Voice Notes/               ← the notebook you choose
@@ -61,7 +78,7 @@ The model, backend, note prefix and silence settings all come from `~/.config/he
 
    To use a specific install, set **Tools → Options → Hey Whisper → Hey Whisper command**, e.g. `/path/to/venv/bin/hey-whisper --serve`. Hover over the engine name in the panel to see which command is in use.
 
-4. Select the notebook to hold your voice notes in the sidebar, then run **Tools → Hey Whisper → Use selected notebook for voice notes**. The panel also has a **Use selected notebook** link.
+4. For weekly notes only: select the notebook to hold your voice notes in the sidebar, then run **Tools → Hey Whisper → Use selected notebook for voice notes**. The panel also has a **Use selected notebook** link.
 
 ## Use
 
@@ -71,7 +88,7 @@ Recording is controlled from the 🎤 button in the note toolbar (top right) or 
 |---|---|
 | Start / finish a voice note | 🎤, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> |
 | Cancel the current recording | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> |
-| Open this week's voice notes | **Tools → Hey Whisper → Open this week's voice notes** |
+| Open this week's voice notes (weekly notes only) | **Tools → Hey Whisper → Open this week's voice notes** |
 
 The shortcuts work anywhere in Joplin while its window is focused. They aren't system-wide. You can rebind them under **Tools → Options → Keyboard Shortcuts**, but the pop-up hints keep naming the defaults.
 
@@ -79,7 +96,7 @@ Short pop-up messages show what's happening:
 - "Starting Hey Whisper…", on first use while the engine loads
 - "🎙️ Recording…"
 - "Transcribing…"
-- "Saved to Voice Notes › 2026-09-07: …" with the start of the text
+- "Saved to Project Falcon: …" (or "Voice Notes › 2026-09-07" for weekly notes) with the start of the text
 - a message when nothing was recorded or a recording was cancelled
 - errors, which include the transcript if it couldn't be saved
 
@@ -95,7 +112,7 @@ Short pop-up messages show what's happening:
 
 Joplin's toolbar buttons and shortcuts don't report release, so push-to-talk (Hold) needs the panel.
 
-If you're editing the weekly note while a transcript arrives, Joplin reloads the note with the new entry. Unsaved edits typed in the last moment before that can be lost, so it's safest to dictate while viewing a different note.
+The transcript is saved to the note that was open when you started recording, even if you switch notes while it's transcribing. Joplin then reloads the note with the new entry. Anything typed into that note in the moment before the entry lands may not have been saved yet and can be lost, so pause typing while a transcript is on its way.
 
 ## Development
 
