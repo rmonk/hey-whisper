@@ -1,7 +1,7 @@
 {
   "name": "joplin-plugin-hey-whisper",
   "version": "0.1.0",
-  "description": "Hey Whisper voice notes inside Joplin: dictate into weekly notes organized by year and month.",
+  "description": "Hey Whisper voice notes inside Joplin: dictate into the open note under a heading for the day, or into weekly notes.",
   "scripts": {
     "dist": "webpack --env joplin-plugin-config=buildMain && webpack --env joplin-plugin-config=buildExtraScripts && webpack --env joplin-plugin-config=createArchive",
     "prepare": "npm run dist",

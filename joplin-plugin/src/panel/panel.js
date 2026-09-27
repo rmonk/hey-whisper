@@ -55,8 +55,11 @@
 
 		$('.hw-engine').textContent = state.backend ? `${state.backend} · ${state.model}` : '';
 		$('.hw-engine').title = state.command || '';
-		$('.hw-root').textContent = state.rootTitle ? `Saving to: ${state.rootTitle}` : 'No notebook chosen';
-		$('.hw-open-week').hidden = !state.rootTitle;
+		const weekly = state.target === 'weekly';
+		$('.hw-root').textContent = !weekly ? 'Saving to: the open note'
+			: state.rootTitle ? `Saving to: ${state.rootTitle}` : 'No notebook chosen';
+		$('.hw-set-root').hidden = !weekly;
+		$('.hw-open-week').hidden = !weekly || !state.rootTitle;
 
 		const message = $('.hw-message');
 		message.textContent = state.message;

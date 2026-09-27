@@ -218,11 +218,11 @@ def append_note(
         separator = "" if content.endswith("\n\n") else ("\n" if content.endswith("\n") else "\n\n")
         new_content = f"{content}{separator}{day_header}\n\n{entry_line}\n"
     else:
-        # Day header exists. Locate next day header or end of file to append item under this day
+        # Day header exists. Locate the next top-level heading or end of file to append item under this day
         match = header_matches[-1]
         start_idx = match.end()
-        # Find next header (# ...) after this day
-        next_header = re.search(r"^#\s+\d{4}-\d{2}-\d{2}", content[start_idx:], re.MULTILINE)
+        # Find next top-level header (# ...) after this day
+        next_header = re.search(r"^#\s", content[start_idx:], re.MULTILINE)
         if next_header:
             insert_pos = start_idx + next_header.start()
             section = content[start_idx:insert_pos].rstrip()

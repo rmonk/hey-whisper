@@ -62,6 +62,9 @@ describe('insertEntry matches storage.py:append_note', () => {
 		['# 2026-09-09\n\n- a\n', '2026-09-10', '# 2026-09-09\n\n- a\n\n# 2026-09-10\n\n- z\n'],
 		['# 2026-09-09\n\n# 2026-09-10\n\n- b\n', '2026-09-09', '# 2026-09-09\n\n\n- z\n\n# 2026-09-10\n\n- b\n'],
 		['Intro text\n# 2026-09-09\n\n- a\n\n\n# 2026-09-10\n- b\n', '2026-09-09', 'Intro text\n# 2026-09-09\n\n- a\n- z\n\n# 2026-09-10\n- b\n'],
+		// The day section ends at any top-level heading, not just the next day
+		['# 2026-09-09\n\n- a\n## Detail\n\n- x\n\n# Other\n\ntext\n', '2026-09-09', '# 2026-09-09\n\n- a\n## Detail\n\n- x\n- z\n\n# Other\n\ntext\n'],
+		['# Meeting\n\nAgenda\n', '2026-09-09', '# Meeting\n\nAgenda\n\n# 2026-09-09\n\n- z\n'],
 	])('hand-edited body %j on %s', (body, day, expected) => {
 		expect(insertEntry(body, day, '- z')).toBe(expected);
 	});
